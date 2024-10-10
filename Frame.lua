@@ -2,8 +2,8 @@ local _, AddOn = ...
 local L = AddOn.L
 
 local icon = LibStub("LibDBIcon-1.0")
-local CreateFrame, unpack, GetItemInfo, select = CreateFrame, unpack, GetItemInfo, select
-local GetItemInfoInstant = GetItemInfoInstant
+local CreateFrame, unpack, GetItemInfo, select = CreateFrame, unpack, C_Item.GetItemInfo, select
+local GetItemInfoInstant = C_Item.GetItemInfoInstant
 local ITEM_QUALITY_COLORS, CreateFont, UIParent = ITEM_QUALITY_COLORS, CreateFont, UIParent
 local tsort, tonumber, xpcall, geterrorhandler = table.sort, tonumber, xpcall, geterrorhandler
 local IsModifiedClick, ChatEdit_InsertLink, DressUpItemLink = IsModifiedClick, ChatEdit_InsertLink, DressUpItemLink
@@ -135,19 +135,19 @@ function AddOn.setItemTooltip(frame, item)
 end
 
 local normal_button_text = CreateFont("dynt_button")
-normal_button_text:SetFont("Interface\\AddOns\\DoYouNeedThat\\Media\\Roboto-Medium.ttf", 12)
+normal_button_text:SetFont("Interface\\AddOns\\DoYouNeedThat\\Media\\Roboto-Medium.ttf", 12, "")
 normal_button_text:SetTextColor(1,1,1,1)
 normal_button_text:SetShadowColor(0, 0, 0)
 normal_button_text:SetShadowOffset(1, -1)
 normal_button_text:SetJustifyH("CENTER")
 
 local large_font = CreateFont("dynt_large_text")
-large_font:SetFont("Interface\\AddOns\\DoYouNeedThat\\Media\\Roboto-Medium.ttf", 14)
+large_font:SetFont("Interface\\AddOns\\DoYouNeedThat\\Media\\Roboto-Medium.ttf", 14, "")
 large_font:SetShadowColor(0, 0, 0)
 large_font:SetShadowOffset(1, -1)
 
 local normal_font = CreateFont("dynt_normal_text")
-normal_font:SetFont("Interface\\AddOns\\DoYouNeedThat\\Media\\Roboto-Medium.ttf", 11)
+normal_font:SetFont("Interface\\AddOns\\DoYouNeedThat\\Media\\Roboto-Medium.ttf", 11, "")
 normal_font:SetTextColor(1,1,1,1)
 normal_font:SetShadowColor(0, 0, 0)
 normal_font:SetShadowOffset(1, -1)
@@ -379,6 +379,10 @@ function AddOn.createOptionsFrame()
     options.debug:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -20)
     DYNT_Options_DebugText:SetText(L["Debug"])
     if AddOn.Config.debug then options.debug:SetChecked(true) end
+    options.debug:SetScript("OnClick", function(self)
+        AddOn.Config.debug = self:GetChecked()
+    end)
+
 
     -- Open after boss kill toggle
     ---@type CheckButton
@@ -386,6 +390,9 @@ function AddOn.createOptionsFrame()
     options.openAfterEncounter:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -40)
     DYNT_Options_OpenAfterEncounterText:SetText(L["Open loot window after encounter"])
     if AddOn.Config.openAfterEncounter then options.openAfterEncounter:SetChecked(true) end
+    options.openAfterEncounter:SetScript("OnClick", function(self)
+        AddOn.Config.openAfterEncounter = self:GetChecked()
+    end)
 
     -- Whisper message
     --@type EditBox
@@ -399,6 +406,7 @@ function AddOn.createOptionsFrame()
     options.whisperMessage:SetCursorPosition(0)
     options.whisperMessage:SetScript("OnEditFocusGained", function() --[[ Override to not highlight the text ]] end)
     options.whisperMessage:SetScript("OnEnterPressed", function(self)
+        AddOn.Config.whisperMessage = self:GetText()
         self:ClearFocus()
     end)
 
@@ -418,6 +426,14 @@ function AddOn.createOptionsFrame()
 	options.hideMinimap:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -110)
 	DYNT_Options_HideMinimapText:SetText(L["Hide minimap button"])
 	if AddOn.db.minimap.hide then options.hideMinimap:SetChecked(true) end
+    options.hideMinimap:SetScript("OnClick", function(self)
+        AddOn.db.minimap.hide = self:GetChecked()
+        if not self:GetChecked() then
+            icon:Show("DoYouNeedThat")
+        else
+            icon:Hide("DoYouNeedThat")
+        end
+    end)
 
     options.minDelta = CreateFrame("Slider", "DYNT_Options_MinDelta", options, "OptionsSliderTemplate")
     options.minDelta:SetWidth(100)
@@ -428,7 +444,10 @@ function AddOn.createOptionsFrame()
     options.minDelta:SetValue(AddOn.Config.minDelta)
     options.minDelta:SetValueStep(1)
     options.minDelta:SetObeyStepOnDrag(true)
-    options.minDelta:SetScript("OnValueChanged", function (_, val) DYNT_Options_MinDeltaText:SetText(val) end)
+    options.minDelta:SetScript("OnValueChanged", function (_, val)
+        DYNT_Options_MinDeltaText:SetText(val)
+        AddOn.Config.minDelta = val
+    end)
     options.tooltipText = L["Minimum itemlevel allowed"]
     DYNT_Options_MinDeltaLow:SetText("0")
     DYNT_Options_MinDeltaHigh:SetText("30")
@@ -444,36 +463,6 @@ function AddOn.createOptionsFrame()
     options.minDelta.labelText:SetShadowOffset(1, -1)
     options.minDelta.labelText:SetText(L["Minimum itemlevels lower"])
 
-    -- Set the field values to their value in SavedVariables.
-    function options.refreshFields()
-        options.debug:SetChecked(AddOn.Config.debug)
-        options.openAfterEncounter:SetChecked(AddOn.Config.openAfterEncounter)
-        options.whisperMessage:SetText(AddOn.Config.whisperMessage)
-        options.whisperMessage:SetCursorPosition(0)
-		options.hideMinimap:SetChecked(AddOn.db.minimap.hide)
-        options.minDelta:SetValue(AddOn.Config.minDelta)
-    end
-
-    function options.okay()
-        xpcall(function()
-            AddOn.db.config.debug = options.debug:GetChecked()
-            AddOn.db.config.openAfterEncounter = options.openAfterEncounter:GetChecked()
-            AddOn.db.config.whisperMessage = options.whisperMessage:GetText()
-			if options.hideMinimap:GetChecked() then
-				icon:Hide("DoYouNeedThat")
-				AddOn.db.minimap.hide = true;
-			else
-				icon:Show("DoYouNeedThat")
-				AddOn.db.minimap.hide = false;
-			end
-            AddOn.db.config.minDelta = options.minDelta:GetValue()
-        end, geterrorhandler())
-    end
-
-    function options.cancel()
-        -- Return the fields to a clean slate
-        options.refreshFields()
-    end
-
-    InterfaceOptions_AddCategory(options)
+    local category = Settings.RegisterCanvasLayoutCategory(options, "DoYouNeedThat")
+    Settings.RegisterAddOnCategory(category)
 end

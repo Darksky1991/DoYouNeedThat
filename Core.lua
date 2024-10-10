@@ -2,15 +2,15 @@ local AddonName, AddOn = ...
 
 -- Localize
 local print, gsub, sfind = print, string.gsub, string.find
-local GetItemInfo, IsEquippableItem = GetItemInfo, IsEquippableItem
+local GetItemInfo, IsEquippableItem = C_Item.GetItemInfo, C_Item.IsEquippableItem
 local GetInventoryItemLink, UnitClass = GetInventoryItemLink, UnitClass
 local SendChatMessage, UIParent = SendChatMessage, UIParent
-local select, IsInGroup, GetItemInfoInstant = select, IsInGroup, GetItemInfoInstant
+local select, IsInGroup, GetItemInfoInstant = select, IsInGroup, C_Item.GetItemInfoInstant
 local UnitGUID, IsInRaid, GetNumGroupMembers, GetInstanceInfo = UnitGUID, IsInRaid, GetNumGroupMembers, GetInstanceInfo
 local C_Timer, InCombatLockdown, time = C_Timer, InCombatLockdown, time
 local UnitIsConnected, CanInspect, UnitName = UnitIsConnected, CanInspect, UnitName
 local WEAPON, ARMOR, RAID_CLASS_COLORS = WEAPON, ARMOR, RAID_CLASS_COLORS
-local CreateFrame, GetDetailedItemLevelInfo = CreateFrame, GetDetailedItemLevelInfo
+local CreateFrame, GetDetailedItemLevelInfo = CreateFrame, C_Item.GetDetailedItemLevelInfo
 -- Fix for clients with other languages
 local AUCTION_CATEGORY_ARMOR = AUCTION_CATEGORY_ARMOR
 
@@ -77,7 +77,7 @@ function AddOn:CHAT_MSG_LOOT(...)
 	-- If not equippable by your class return
 	if not self:IsEquippableForClass(itemClass, itemSubClass, equipLoc) then return end
 	-- Should get rid of class specific pieces that you cannnot equip.
-	if not DoesItemContainSpec(item, playerClassId) then return end
+	if not C_Item.DoesItemContainSpec(item, playerClassId) then return end
 
 	--local _, iLvl = LibItemLevel:GetItemInfo(item)
 	local iLvl = GetDetailedItemLevelInfo(item)
