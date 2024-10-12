@@ -100,12 +100,18 @@ function AddOn:BOSS_KILL()
 	if self.Config.openAfterEncounter and difficulty ~= 8 then self.lootFrame:Show() end
 end
 
+function AddOn:CHALLENGE_MODE_COMPLETED()
+	self:ClearEntries()
+	self.lootFrame:Show()
+end
+
 function AddOn:PLAYER_ENTERING_WORLD()
 	local _, instanceType = GetInstanceInfo()
 	if instanceType == "none" then
 		-- self.Debug("Not in instance, unregistering events")
 		self.EventFrame:UnregisterEvent("CHAT_MSG_LOOT")
 		self.EventFrame:UnregisterEvent("BOSS_KILL")
+		self.EventFrame:UnregisterEvent("CHALLENGE_MODE_COMPLETED")
 		if self.InspectTimer then
 			self.InspectTimer:Cancel()
 			self.InspectTimer = nil
@@ -115,6 +121,7 @@ function AddOn:PLAYER_ENTERING_WORLD()
 	self.Debug("In instance, registering events")
 	self.EventFrame:RegisterEvent("CHAT_MSG_LOOT")
     self.EventFrame:RegisterEvent("BOSS_KILL")
+    self.EventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
 	-- Set repeated timer to check for raidmembers inventory
 	self.InspectTimer = C_Timer.NewTicker(7, function() self.InspectGroup() end)
 end
