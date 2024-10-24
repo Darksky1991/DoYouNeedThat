@@ -1,8 +1,9 @@
-## Interface: 110002
+## Interface: 110002, 110005
 
 ## Title: DoYouNeedThat?
 ## Author: Kraffs <Numinous-TarrenMill LootCouncil-TarrenMill>; Darksky
-## Version: 1.2.0
+## Version: 1.2.1
+## IconTexture: Interface\AddOns\DoYouNeedThat\Media\dynt.png
 ## Notes: Pesters people for loot because Personal Loot is fun!
 ## SavedVariables: DyntDB
 
