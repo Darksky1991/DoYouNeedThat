@@ -4,7 +4,7 @@ local AddonName, AddOn = ...
 local print, gsub, sfind = print, string.gsub, string.find
 local GetItemInfo, IsEquippableItem = C_Item.GetItemInfo, C_Item.IsEquippableItem
 local GetInventoryItemLink, UnitClass = GetInventoryItemLink, UnitClass
-local SendChatMessage, UIParent = SendChatMessage, UIParent
+local SendChatMessage, UIParent = C_ChatInfo.SendChatMessage, UIParent
 local select, IsInGroup, GetItemInfoInstant = select, IsInGroup, C_Item.GetItemInfoInstant
 local UnitGUID, IsInRaid, GetNumGroupMembers, GetInstanceInfo = UnitGUID, IsInRaid, GetNumGroupMembers, GetInstanceInfo
 local C_Timer, InCombatLockdown, time = C_Timer, InCombatLockdown, time
@@ -66,25 +66,42 @@ function AddOn:CHAT_MSG_LOOT(...)
 	if not item then return end
 
 	local _, _, rarity, _, _, type, _, _, equipLoc, _, _, itemClass, itemSubClass = GetItemInfo(item)
+	local itemId, _ = C_Item.GetItemInfoInstant(item)
 
+	if not IsEquippableItem(item) then
+		self.Debug(L["Item is not equippable"])
+		if rarity == 4 -- Epic
+			and itemClass == 15 -- Miscellaneous
+			and itemSubClass == 0 -- Junk
+			and next(C_Item.GetItemSpecInfo(item)) ~= nil then -- Regard as ItemSet
+			self.Debug(L["Item is fittable for player class"])
+		else
+			self.Debug(L["Item is not fittable for player class"])
+			return
+		end
+	end
 
-	if not IsEquippableItem(item) then return end
+	-- Can be used by player
+	if not C_PlayerInfo.CanUseItem(itemId) then
+		self.Debug(L["Item is not equippable by your class"])
+		return
+	end
 
 	-- If not Armor/Weapon
-	if (type ~= ARMOR and type ~= AUCTION_CATEGORY_ARMOR and type ~= WEAPON) then return end
+	-- if (type ~= ARMOR and type ~= AUCTION_CATEGORY_ARMOR and type ~= WEAPON) then return end
 	-- If its a Legendary or under rare quality
 	if rarity == 5 or rarity < 3 then return end
 	-- If not equippable by your class return
-	if not self:IsEquippableForClass(itemClass, itemSubClass, equipLoc) then return end
+	-- if not self:IsEquippableForClass(itemClass, itemSubClass, equipLoc) then return end
 	-- Should get rid of class specific pieces that you cannnot equip.
-	if not C_Item.DoesItemContainSpec(item, playerClassId) then return end
+	-- if not C_Item.DoesItemContainSpec(item, playerClassId) then return end
 
 	--local _, iLvl = LibItemLevel:GetItemInfo(item)
 	local iLvl = GetDetailedItemLevelInfo(item)
 
 	self.Debug(item .. " " .. iLvl)
 
-	if not self:IsItemUpgrade(iLvl, equipLoc) then return end
+	-- if not self:IsItemUpgrade(iLvl, equipLoc) then return end
 
 	if not sfind(looter, '-') then
 		looter = self.Utils.GetUnitNameWithRealm(looter)
@@ -101,6 +118,7 @@ function AddOn:BOSS_KILL()
 end
 
 function AddOn:CHALLENGE_MODE_COMPLETED()
+	self.Debug("Challenge mode completed, clearing entries")
 	self:ClearEntries()
 	self.lootFrame:Show()
 end
@@ -173,7 +191,7 @@ end
 local function GetEquippedIlvlBySlotID(slotID)
 	local item = GetInventoryItemLink('player', slotID)
 	--local _, iLvl = LibItemLevel:GetItemInfo(item)
-	local iLvl = GetDetailedItemLevelInfo(item)
+	local iLvl = GetDetailedItemLevelInfo(item or '')
 	return iLvl
 end
 
@@ -370,6 +388,11 @@ local function SlashCommandHandler(msg)
 		item[3] = iLvl
 		LibInspect:RequestData("items", "player", false)
 		AddOn:AddItemToLootTable(item)
+	elseif cmd == "testmsg" and args ~= "" then
+		local player = UnitName("player")
+		local msg = gsub(LOOT_ITEM, '%%s', player, 1)
+		msg = gsub(msg, '%%s', args, 1)
+		AddOn:CHAT_MSG_LOOT(msg, nil, nil, nil, player);
 	elseif cmd == "debug" then
 		AddOn.Config.debug = not AddOn.Config.debug
 		AddOn.Print("Debug mode " .. (AddOn.Config.debug and "enabled" or "disabled"))
