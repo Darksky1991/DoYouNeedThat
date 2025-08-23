@@ -96,6 +96,18 @@ function AddOn:CHAT_MSG_LOOT(...)
 	-- Should get rid of class specific pieces that you cannnot equip.
 	-- if not C_Item.DoesItemContainSpec(item, playerClassId) then return end
 
+	-- If not contain spec
+	if not C_Item.DoesItemContainSpec(item, playerClassId) then
+		self.Debug(L["Item is not contain your class"])
+		return
+	end
+
+	-- If its bind to Account until equip
+	if C_Item.IsItemBindToAccountUntilEquip(item) then
+		self.Debug(L["Item is Bind to Account until equip"])
+		return
+	end
+
 	--local _, iLvl = LibItemLevel:GetItemInfo(item)
 	local iLvl = GetDetailedItemLevelInfo(item)
 
