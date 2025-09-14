@@ -132,13 +132,15 @@ end
 function AddOn:CHALLENGE_MODE_COMPLETED()
 	self.Debug("Challenge mode completed, clearing entries")
 	self:ClearEntries()
+	self.Debug("Opening loot window")
 	self.lootFrame:Show()
+	self.Debug("Challenge mode completed event end")
 end
 
 function AddOn:PLAYER_ENTERING_WORLD()
 	local _, instanceType = GetInstanceInfo()
 	if instanceType == "none" then
-		-- self.Debug("Not in instance, unregistering events")
+		self.Debug("Not in instance, unregistering events")
 		self.EventFrame:UnregisterEvent("CHAT_MSG_LOOT")
 		self.EventFrame:UnregisterEvent("BOSS_KILL")
 		self.EventFrame:UnregisterEvent("CHALLENGE_MODE_COMPLETED")
@@ -249,6 +251,7 @@ function AddOn:IsEquippableForClass(itemClass, itemSubClass, equipLoc)
 end
 
 function AddOn:ClearEntries()
+	self.Debug("Clearing entries start")
 	for i = 1, #self.Entries do
 		if self.Entries[i].itemLink then
 			self.Entries[i]:Hide()
@@ -257,6 +260,7 @@ function AddOn:ClearEntries()
 			self.Entries[i].guid = nil
 		end
 	end
+	self.Debug("Clearing entries end")
 end
 
 function AddOn:GetEntry(itemLink, looter)
@@ -382,7 +386,12 @@ end)
 
 -- Event handler
 AddOn.EventFrame:SetScript("OnEvent", function(self, event, ...)
-	if AddOn[event] then AddOn[event](AddOn, ...) end
+	AddOn.Debug(event .. " event fired")
+	if AddOn[event] then
+		AddOn[event](AddOn, ...)
+	else
+		AddOn.Debug("No event handler for " .. event)
+	end
 end)
 
 AddOn.EventFrame:RegisterEvent("ADDON_LOADED")
