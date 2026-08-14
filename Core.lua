@@ -458,6 +458,35 @@ function AddOn:AddItemToLootTable(t)
 
 	entry.whisper:Show()
 	entry:Show()
+	if self.Config.openAfterEncounter then
+		self.lootFrame:Show()
+		self.db.lootWindowOpen = true
+	end
+end
+
+function AddOn:RefreshEntriesForGUID(guid)
+	local raidMember = self.RaidMembers[guid]
+	if not raidMember then return end
+
+	for i = 1, #self.Entries do
+		local entry = self.Entries[i]
+		if entry.guid == guid and entry.itemLink then
+			local _, _, _, equipLoc = GetItemInfoInstant(entry.itemLink)
+			local item, item2 = nil, nil
+			entry.looterEq1:Hide()
+			entry.looterEq2:Hide()
+			if equipLoc == "INVTYPE_FINGER" then
+				item, item2 = raidMember.items[11], raidMember.items[12]
+			elseif equipLoc == "INVTYPE_TRINKET" then
+				item, item2 = raidMember.items[13], raidMember.items[14]
+			else
+				local slotId = self.Utils.GetSlotID(equipLoc)
+				item = slotId and raidMember.items[slotId]
+			end
+			if item ~= nil then self.setItemTooltip(entry.looterEq1, item) end
+			if item2 ~= nil then self.setItemTooltip(entry.looterEq2, item2) end
+		end
+	end
 end
 
 function AddOn:SendWhisper(itemLink, looter)
@@ -593,6 +622,7 @@ LibInspect:AddHook(AddonName, "items", function(guid, data)
 			items = data.items,
 			maxAge = time() + 600
 		}
+		AddOn:RefreshEntriesForGUID(guid)
 		if ClearInspectPlayer then
 			ClearInspectPlayer()
 		end
@@ -634,6 +664,7 @@ local function SlashCommandHandler(msg)
 		AddOn:ProcessLootItem(args, player)
 	elseif cmd == "testmsg" and args ~= "" then
 		local player = UnitName("player")
+		LibInspect:RequestData("items", "player", false)
 		local msg = gsub(LOOT_ITEM, '%%s', player, 1)
 		msg = gsub(msg, '%%s', args, 1)
 		AddOn:CHAT_MSG_LOOT(msg, nil, nil, nil, player);
