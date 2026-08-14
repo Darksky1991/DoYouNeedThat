@@ -142,6 +142,11 @@ function AddOn:ProcessLootItem(item, looter)
 
 	self.Debug(item .. " " .. iLvl)
 
+	if not self:IsItemUpgrade(iLvl, equipLoc) then
+		self.Debug(L["Item is below itemlevel threshold"])
+		return
+	end
+
 	if not sfind(looter, '-') then
 		looter = self.Utils.GetUnitNameWithRealm(looter) or looter
 	end
@@ -343,7 +348,9 @@ end
 
 function AddOn:IsItemUpgrade(ilvl, equipLoc)
 	local function overOrWithinMin(ilvl, eq, delta)
-		return eq <= ilvl or ilvl >= eq - delta
+		if not ilvl then return false end
+		if not eq then return true end
+		return ilvl >= eq - delta
 	end
 
 	if ilvl ~= nil and equipLoc ~= nil and equipLoc ~= '' then
@@ -363,6 +370,7 @@ function AddOn:IsItemUpgrade(ilvl, equipLoc)
 			return overOrWithinMin(ilvl, eqIlvl1, delta) or overOrWithinMin(ilvl, eqIlvl2, delta)
 		else
 			local slotID = AddOn.Utils.GetSlotID(equipLoc)
+			if not slotID then return true end
 			local eqIlvl = GetEquippedIlvlBySlotID(slotID)
 			return overOrWithinMin(ilvl, eqIlvl, delta)
 		end
@@ -622,11 +630,8 @@ local function SlashCommandHandler(msg)
 		AddOn:ClearEntries()
 	elseif cmd == "test" and args ~= "" then
 		local player = UnitName("player")
-		local item = {args, player}
-		local iLvl = GetDetailedItemLevelInfo(args)
-		item[3] = iLvl
 		LibInspect:RequestData("items", "player", false)
-		AddOn:AddItemToLootTable(item)
+		AddOn:ProcessLootItem(args, player)
 	elseif cmd == "testmsg" and args ~= "" then
 		local player = UnitName("player")
 		local msg = gsub(LOOT_ITEM, '%%s', player, 1)
