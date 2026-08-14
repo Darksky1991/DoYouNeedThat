@@ -8,7 +8,7 @@ local ITEM_QUALITY_COLORS, CreateFont, UIParent = ITEM_QUALITY_COLORS, CreateFon
 local tsort, tonumber, xpcall, geterrorhandler = table.sort, tonumber, xpcall, geterrorhandler
 local IsModifiedClick, ChatEdit_InsertLink, DressUpItemLink = IsModifiedClick, ChatEdit_InsertLink, DressUpItemLink
 local ShowUIPanel, GameTooltip = ShowUIPanel, GameTooltip
-local IsAzeriteEmpoweredItemByID = C_AzeriteEmpoweredItem.IsAzeriteEmpoweredItemByID
+local IsAzeriteEmpoweredItemByID = C_AzeriteEmpoweredItem and C_AzeriteEmpoweredItem.IsAzeriteEmpoweredItemByID
 local OpenAzeriteEmpoweredItemUIFromLink = OpenAzeriteEmpoweredItemUIFromLink
 local BackdropTemplateMixin = BackdropTemplateMixin
 
@@ -89,6 +89,7 @@ end
 
 local function setItemBorderColor(frame, item)
     local color = ITEM_QUALITY_COLORS[select(3, GetItemInfo(item))]
+    if not color then return false end
     frame:SetBackdropBorderColor(color.r, color.g, color.b, 1)
     return true
 end
@@ -115,7 +116,7 @@ end
 
 function AddOn.setItemTooltip(frame, item)
 	local tex = select(5, GetItemInfoInstant(item))
-	frame.tex:SetTexture(tex)
+	frame.tex:SetTexture(tex or 134400)
 	frame:SetScript("OnEnter", function() showItemTooltip(item) end)
 	frame:SetScript("OnLeave", function() hideItemTooltip() end)
     frame:SetScript("OnClick", function(_, button)
@@ -124,7 +125,7 @@ function AddOn.setItemTooltip(frame, item)
         end
         if IsModifiedClick("DRESSUP") then return DressUpItemLink(item) end
         if button == "RightButton" and IsModifiedClick("EXPANDITEM") then
-            if IsAzeriteEmpoweredItemByID(item) then
+            if IsAzeriteEmpoweredItemByID and OpenAzeriteEmpoweredItemUIFromLink and IsAzeriteEmpoweredItemByID(item) then
                 OpenAzeriteEmpoweredItemUIFromLink(item);
                 return true;
             end

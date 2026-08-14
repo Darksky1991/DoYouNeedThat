@@ -9,6 +9,8 @@ local select, IsInGroup, GetItemInfoInstant = select, IsInGroup, C_Item.GetItemI
 local UnitGUID, IsInRaid, GetNumGroupMembers, GetInstanceInfo = UnitGUID, IsInRaid, GetNumGroupMembers, GetInstanceInfo
 local C_Timer, InCombatLockdown, time = C_Timer, InCombatLockdown, time
 local UnitIsConnected, CanInspect, UnitName = UnitIsConnected, CanInspect, UnitName
+local CheckInteractDistance, UnitIsVisible, UnitExists = CheckInteractDistance, UnitIsVisible, UnitExists
+local ClearInspectPlayer, issecretvalue = ClearInspectPlayer, issecretvalue
 local WEAPON, ARMOR, RAID_CLASS_COLORS = WEAPON, ARMOR, RAID_CLASS_COLORS
 local CreateFrame, GetDetailedItemLevelInfo = CreateFrame, C_Item.GetDetailedItemLevelInfo
 -- Fix for clients with other languages
@@ -16,7 +18,6 @@ local AUCTION_CATEGORY_ARMOR = AUCTION_CATEGORY_ARMOR
 
 local L = AddOn.L
 local LOOT_ITEM_PATTERN = gsub(LOOT_ITEM, '%%s', '(.+)')
--- local LibItemLevel = LibStub("LibItemLevel")
 local LibInspect = LibStub("LibInspect")
 local _, playerClass, playerClassId = UnitClass("player")
 local icon = LibStub("LibDBIcon-1.0")
@@ -49,6 +50,11 @@ AddOn.Entries = {}
 AddOn.RaidMembers = {}
 AddOn.Config = {}
 AddOn.inspectCount = 1
+AddOn.PendingLoot = {}
+AddOn.InspectFailures = {}
+
+local INSPECT_RETRY_DELAY = 10
+local PENDING_LOOT_MAX_RETRIES = 5
 
 function AddOn.Print(msg)
 	print("[|cff3399FFDYNT|r] " .. msg)
@@ -58,22 +64,52 @@ function AddOn.Debug(msg)
 	if AddOn.Config.debug then AddOn.Print(msg) end
 end
 
--- Events: CHAT_MSG_LOOT, BOSS_KILL
-function AddOn:CHAT_MSG_LOOT(...)
-	local message, _, _, _, looter = ...
-	local _, item = message:match(LOOT_ITEM_PATTERN)
+local function ExtractItemLink(message)
+	if not message then return nil end
+	return message:match("(|c%x+|Hitem:.-|h%[.-%]|h|r)") or message:match("(|cn.-:|Hitem:.-|h%[.-%]|h|r)")
+end
 
-	if not item then return end
+local function IsItemInfoReady(item)
+	if not item then return false end
+	local _, _, rarity = GetItemInfo(item)
+	local itemId = C_Item.GetItemInfoInstant(item)
+	local iLvl = GetDetailedItemLevelInfo(item)
+	return itemId ~= nil and rarity ~= nil and iLvl ~= nil
+end
+
+function AddOn:QueuePendingLoot(item, looter, retries)
+	if not item or not looter then return end
+	local itemId = self.Utils.GetItemIDFromLink(item) or item
+	self.PendingLoot[itemId] = {
+		item = item,
+		looter = looter,
+		retries = retries or 0,
+	}
+	self.EventFrame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+	if not self.PendingLootTimer then
+		self.PendingLootTimer = C_Timer.NewTicker(2, function() self:GET_ITEM_INFO_RECEIVED() end)
+	end
+	self.Debug("Queued loot until item info is cached: " .. item)
+end
+
+function AddOn:ProcessLootItem(item, looter)
+	if not item or not looter then return end
+	if not IsItemInfoReady(item) then
+		self:QueuePendingLoot(item, looter)
+		return
+	end
 
 	local _, _, rarity, _, _, type, _, _, equipLoc, _, _, itemClass, itemSubClass = GetItemInfo(item)
-	local itemId, _ = C_Item.GetItemInfoInstant(item)
+	local itemId = C_Item.GetItemInfoInstant(item)
 
 	if not IsEquippableItem(item) then
 		self.Debug(L["Item is not equippable"])
+		local specInfo = C_Item.GetItemSpecInfo and C_Item.GetItemSpecInfo(item)
 		if rarity == 4 -- Epic
 			and itemClass == 15 -- Miscellaneous
 			and itemSubClass == 0 -- Junk
-			and next(C_Item.GetItemSpecInfo(item)) ~= nil then -- Regard as ItemSet
+			and specInfo
+			and next(specInfo) ~= nil then -- Regard as ItemSet
 			self.Debug(L["Item is fittable for player class"])
 		else
 			self.Debug(L["Item is not fittable for player class"])
@@ -82,44 +118,81 @@ function AddOn:CHAT_MSG_LOOT(...)
 	end
 
 	-- Can be used by player
-	if not C_PlayerInfo.CanUseItem(itemId) then
+	if C_PlayerInfo and C_PlayerInfo.CanUseItem and not C_PlayerInfo.CanUseItem(itemId) then
 		self.Debug(L["Item is not equippable by your class"])
 		return
 	end
 
-	-- If not Armor/Weapon
-	-- if (type ~= ARMOR and type ~= AUCTION_CATEGORY_ARMOR and type ~= WEAPON) then return end
 	-- If its a Legendary or under rare quality
 	if rarity == 5 or rarity < 3 then return end
-	-- If not equippable by your class return
-	-- if not self:IsEquippableForClass(itemClass, itemSubClass, equipLoc) then return end
-	-- Should get rid of class specific pieces that you cannnot equip.
-	-- if not C_Item.DoesItemContainSpec(item, playerClassId) then return end
 
 	-- If not contain spec
-	if not C_Item.DoesItemContainSpec(item, playerClassId) then
+	if C_Item.DoesItemContainSpec and not C_Item.DoesItemContainSpec(item, playerClassId) then
 		self.Debug(L["Item is not contain your class"])
 		return
 	end
 
 	-- If its bind to Account until equip
-	if C_Item.IsItemBindToAccountUntilEquip(item) then
+	if C_Item.IsItemBindToAccountUntilEquip and C_Item.IsItemBindToAccountUntilEquip(item) then
 		self.Debug(L["Item is Bind to Account until equip"])
 		return
 	end
 
-	--local _, iLvl = LibItemLevel:GetItemInfo(item)
 	local iLvl = GetDetailedItemLevelInfo(item)
 
 	self.Debug(item .. " " .. iLvl)
 
-	-- if not self:IsItemUpgrade(iLvl, equipLoc) then return end
-
 	if not sfind(looter, '-') then
-		looter = self.Utils.GetUnitNameWithRealm(looter)
+		looter = self.Utils.GetUnitNameWithRealm(looter) or looter
 	end
-	local t = {item, looter, iLvl}
-	self:AddItemToLootTable(t)
+	self:AddItemToLootTable({item, looter, iLvl})
+end
+
+-- Events: CHAT_MSG_LOOT, BOSS_KILL
+function AddOn:CHAT_MSG_LOOT(...)
+	local message, _, _, _, looter = ...
+	if not message then return end
+	if issecretvalue and issecretvalue(message) then return end
+
+	local parsedLooter, item = message:match(LOOT_ITEM_PATTERN)
+	item = item or ExtractItemLink(message)
+	looter = looter or parsedLooter
+
+	self:ProcessLootItem(item, looter)
+end
+
+function AddOn:ENCOUNTER_LOOT_RECEIVED(...)
+	local _, _, itemLink, _, playerName = ...
+	local player = UnitName("player")
+	local shortName = playerName and playerName:match("^([^%-]+)")
+	if shortName == player then return end
+	if itemLink and playerName then
+		self:ProcessLootItem(itemLink, playerName)
+	end
+end
+
+function AddOn:GET_ITEM_INFO_RECEIVED()
+	local hasPending = false
+	for itemId, pending in pairs(self.PendingLoot) do
+		if IsItemInfoReady(pending.item) then
+			self.PendingLoot[itemId] = nil
+			self:ProcessLootItem(pending.item, pending.looter)
+		elseif pending.retries >= PENDING_LOOT_MAX_RETRIES then
+			self.PendingLoot[itemId] = nil
+			self.Debug("Dropping pending loot after item info retries: " .. pending.item)
+		else
+			pending.retries = pending.retries + 1
+			hasPending = true
+		end
+	end
+
+	if not hasPending and not next(self.PendingLoot) then
+		self.EventFrame:UnregisterEvent("GET_ITEM_INFO_RECEIVED")
+		if self.PendingLootTimer then
+			self.PendingLootTimer:Cancel()
+			self.PendingLootTimer = nil
+		end
+	end
 end
 
 function AddOn:BOSS_KILL()
@@ -137,29 +210,89 @@ function AddOn:CHALLENGE_MODE_COMPLETED()
 	self.Debug("Challenge mode completed event end")
 end
 
+function AddOn:StopInspectTimer()
+	self.InspectEnabled = false
+	if self.InspectTimer then
+		self.InspectTimer:Cancel()
+		self.InspectTimer = nil
+	end
+	if ClearInspectPlayer then
+		ClearInspectPlayer()
+	end
+end
+
+function AddOn:StartInspectTimer()
+	self.InspectEnabled = true
+	if not self.InspectTimer then
+		self.InspectTimer = C_Timer.NewTicker(7, function() self.InspectGroup() end)
+	end
+	C_Timer.After(1, function()
+		if self.InspectEnabled then
+			self.InspectGroup()
+		end
+	end)
+end
+
+function AddOn:ClearGroupState()
+	self.RaidMembers = {}
+	self.InspectFailures = {}
+	self.inspectCount = 1
+end
+
+function AddOn:ClearPendingLoot()
+	self.PendingLoot = {}
+	self.EventFrame:UnregisterEvent("GET_ITEM_INFO_RECEIVED")
+	if self.PendingLootTimer then
+		self.PendingLootTimer:Cancel()
+		self.PendingLootTimer = nil
+	end
+end
+
+function AddOn:EnableInstanceEvents()
+	self.EventFrame:RegisterEvent("CHAT_MSG_LOOT")
+	self.EventFrame:RegisterEvent("ENCOUNTER_LOOT_RECEIVED")
+	self.EventFrame:RegisterEvent("BOSS_KILL")
+	self.EventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
+	self.EventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+	self.EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+	self:StartInspectTimer()
+end
+
+function AddOn:DisableInstanceEvents()
+	self.EventFrame:UnregisterEvent("CHAT_MSG_LOOT")
+	self.EventFrame:UnregisterEvent("ENCOUNTER_LOOT_RECEIVED")
+	self.EventFrame:UnregisterEvent("BOSS_KILL")
+	self.EventFrame:UnregisterEvent("CHALLENGE_MODE_COMPLETED")
+	self.EventFrame:UnregisterEvent("GROUP_ROSTER_UPDATE")
+	self.EventFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
+	self:StopInspectTimer()
+	self:ClearGroupState()
+	self:ClearPendingLoot()
+end
+
 function AddOn:PLAYER_ENTERING_WORLD()
 	local _, instanceType = GetInstanceInfo()
 	if instanceType == "none" then
 		self.Debug("Not in instance, unregistering events")
-		self.EventFrame:UnregisterEvent("CHAT_MSG_LOOT")
-		self.EventFrame:UnregisterEvent("BOSS_KILL")
-		self.EventFrame:UnregisterEvent("CHALLENGE_MODE_COMPLETED")
-		if self.InspectTimer then
-			self.InspectTimer:Cancel()
-			self.InspectTimer = nil
-		end
+		self:DisableInstanceEvents()
 		return
 	end
 	self.Debug("In instance, registering events")
-	self.EventFrame:RegisterEvent("CHAT_MSG_LOOT")
-    self.EventFrame:RegisterEvent("BOSS_KILL")
-    self.EventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
-	-- Set repeated timer to check for raidmembers inventory
-	self.InspectTimer = C_Timer.NewTicker(7, function() self.InspectGroup() end)
+	self:EnableInstanceEvents()
+end
+
+function AddOn:GROUP_ROSTER_UPDATE()
+	self:CleanUpGroup()
+	self.inspectCount = 1
+	self:StartInspectTimer()
+end
+
+function AddOn:PLAYER_REGEN_ENABLED()
+	self:InspectGroup()
 end
 
 function AddOn:ADDON_LOADED(addon)
-	if not addon == AddonName then return end
+	if addon ~= AddonName then return end
 	self.EventFrame:UnregisterEvent("ADDON_LOADED")
 
 	-- Set SavedVariables defaults
@@ -204,7 +337,6 @@ end
 
 local function GetEquippedIlvlBySlotID(slotID)
 	local item = GetInventoryItemLink('player', slotID)
-	--local _, iLvl = LibItemLevel:GetItemInfo(item)
 	local iLvl = GetDetailedItemLevelInfo(item or '')
 	return iLvl
 end
@@ -281,9 +413,13 @@ function AddOn:AddItemToLootTable(t)
 	-- Itemlink, Looter, Ilvl
 	self.Debug("Adding item to entries")
 	local entry = self:GetEntry(t[1], t[2])
+	if not entry then
+		self.Debug("Loot table is full")
+		return
+	end
 	local _, _, _, equipLoc, _, _, itemSubClass = GetItemInfoInstant(t[1])
 	local character = t[2]:match("(.*)%-") or t[2]
-	local classColor = RAID_CLASS_COLORS[select(2, UnitClass(character))]
+	local classColor = RAID_CLASS_COLORS[select(2, UnitClass(character))] or { r = 1, g = 1, b = 1 }
 	entry.itemLink = t[1]
 	entry.looter = t[2]
 	entry.guid = UnitGUID(character)
@@ -323,29 +459,96 @@ function AddOn:SendWhisper(itemLink, looter)
 end
 
 function AddOn.InspectPlayer(unit)
-	if not (UnitIsConnected(unit) and CanInspect(unit) and not InCombatLockdown()) then
+	if not UnitExists(unit) then
 		return false
+	end
+
+	local guid = UnitGUID(unit)
+	local now = time()
+	local failure = guid and AddOn.InspectFailures[guid]
+	if failure and failure.nextTry and failure.nextTry > now then
+		return false
+	end
+
+	local function delayRetry(reason)
+		if guid then
+			AddOn.InspectFailures[guid] = {
+				nextTry = now + INSPECT_RETRY_DELAY,
+				reason = reason,
+			}
+		end
+		AddOn.Debug("Inspect delayed for " .. unit .. ": " .. reason)
+		return false
+	end
+
+	if InCombatLockdown() then
+		return delayRetry("in combat")
+	end
+
+	if not UnitIsConnected(unit) then
+		return delayRetry("unit offline")
+	end
+
+	if UnitIsVisible and not UnitIsVisible(unit) then
+		return delayRetry("unit not visible")
+	end
+
+	if CheckInteractDistance and not CheckInteractDistance(unit, 1) then
+		return delayRetry("unit out of inspect range")
+	end
+
+	if not CanInspect(unit) then
+		return delayRetry("cannot inspect unit")
 	end
 
 	local canInspect, unitFound = LibInspect:RequestData("items", unit, false)
 	if not canInspect or not unitFound then
+		delayRetry("inspect request not accepted")
 		return false
 	end
 	return true
 end
 
 function AddOn.CleanUpGroup()
+	local active = {}
+	local isInRaid = IsInRaid()
+	local max = isInRaid and GetNumGroupMembers() or (IsInGroup() and (GetNumGroupMembers() - 1) or 0)
+	local unit = isInRaid and "raid" or "party"
+
+	for i = 1, max do
+		local guid = UnitGUID(unit..i)
+		if guid then
+			active[guid] = true
+		end
+	end
+
+	for guid in pairs(AddOn.RaidMembers) do
+		if not active[guid] then
+			AddOn.RaidMembers[guid] = nil
+		end
+	end
+
+	for guid in pairs(AddOn.InspectFailures) do
+		if not active[guid] then
+			AddOn.InspectFailures[guid] = nil
+		end
+	end
 
 end
 
 function AddOn.InspectGroup()
+	if not AddOn.InspectEnabled then return end
 	local isInRaid = IsInRaid()
 	if not isInRaid and not IsInGroup() or InCombatLockdown() then return end
-	--local max = isInRaid and 40 or 5
-	local max = GetNumGroupMembers()
+	local max = isInRaid and GetNumGroupMembers() or (GetNumGroupMembers() - 1)
+	if max <= 0 then return end
 	local unit = isInRaid and "raid" or "party"
 	local i = AddOn.inspectCount
 	local curTime = time()
+
+	if i > max then
+		i = 1
+	end
 
 	while i <= max do
 		local guid = UnitGUID(unit..i)
@@ -377,10 +580,14 @@ end
 LibInspect:SetMaxAge(599)
 LibInspect:AddHook(AddonName, "items", function(guid, data)
 	if data then
+		AddOn.InspectFailures[guid] = nil
 		AddOn.RaidMembers[guid] = {
 			items = data.items,
 			maxAge = time() + 600
 		}
+		if ClearInspectPlayer then
+			ClearInspectPlayer()
+		end
 	end
 end)
 
@@ -404,7 +611,6 @@ local function SlashCommandHandler(msg)
 	elseif cmd == "test" and args ~= "" then
 		local player = UnitName("player")
 		local item = {args, player}
-		-- local _, iLvl = LibItemLevel:GetItemInfo(args)
 		local iLvl = GetDetailedItemLevelInfo(args)
 		item[3] = iLvl
 		LibInspect:RequestData("items", "player", false)
