@@ -604,9 +604,21 @@ end)
 AddOn.EventFrame:RegisterEvent("ADDON_LOADED")
 AddOn.EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
+function AddOn:PrintHelp()
+	self.Print(L["Commands:"])
+	self.Print("/dynt - " .. L["Toggle Window"])
+	self.Print("/dynt help - " .. L["Show command help"])
+	self.Print("/dynt clear - " .. L["Clear loot list"])
+	self.Print("/dynt test [itemLink] - " .. L["Add test item"])
+	self.Print("/dynt testmsg [itemLink] - " .. L["Simulate loot message"])
+	self.Print("/dynt debug - " .. L["Toggle debug output"])
+end
+
 local function SlashCommandHandler(msg)
 	local _, _, cmd, args = sfind(msg, "%s?(%w+)%s?(.*)")
-	if cmd == "clear" then
+	if cmd == "help" then
+		AddOn:PrintHelp()
+	elseif cmd == "clear" then
 		AddOn:ClearEntries()
 	elseif cmd == "test" and args ~= "" then
 		local player = UnitName("player")
