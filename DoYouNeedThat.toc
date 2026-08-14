@@ -3,7 +3,7 @@
 ## Title: DoYouNeedThat?
 ## Author: Kraffs <Numinous-TarrenMill LootCouncil-TarrenMill>; Darksky
 ## Version: 1.2.5
-## IconTexture: Interface\AddOns\DoYouNeedThat\Media\dynt.png
+## IconTexture: Interface\AddOns\DoYouNeedThat\Media\dynt.tga
 ## Notes: Pesters people for loot because Personal Loot is fun!
 ## SavedVariables: DyntDB
 
