@@ -5,7 +5,7 @@ local icon = LibStub("LibDBIcon-1.0")
 local CreateFrame, unpack, GetItemInfo, select = CreateFrame, unpack, C_Item.GetItemInfo, select
 local GetItemInfoInstant = C_Item.GetItemInfoInstant
 local ITEM_QUALITY_COLORS, CreateFont, UIParent = ITEM_QUALITY_COLORS, CreateFont, UIParent
-local tsort, tonumber, xpcall, geterrorhandler = table.sort, tonumber, xpcall, geterrorhandler
+local tsort, tonumber = table.sort, tonumber
 local IsModifiedClick, ChatEdit_InsertLink, DressUpItemLink = IsModifiedClick, ChatEdit_InsertLink, DressUpItemLink
 local ShowUIPanel, GameTooltip = ShowUIPanel, GameTooltip
 local IsAzeriteEmpoweredItemByID = C_AzeriteEmpoweredItem and C_AzeriteEmpoweredItem.IsAzeriteEmpoweredItemByID
@@ -114,7 +114,7 @@ function AddOn:repositionFrames()
 	end
 end
 
-function AddOn.setItemTooltip(frame, item)
+function AddOn:SetItemTooltip(frame, item)
 	local tex = select(5, GetItemInfoInstant(item))
 	frame.tex:SetTexture(tex or 134400)
 	frame:SetScript("OnEnter", function() showItemTooltip(item) end)
@@ -370,7 +370,7 @@ for i = 1, 20 do
 end
 
 --- Options GUI
-function AddOn.createOptionsFrame()
+function AddOn:CreateOptionsFrame()
     local options = CreateFrame("Frame")
     options.name = "DoYouNeedThat"
 
