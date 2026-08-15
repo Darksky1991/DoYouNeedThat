@@ -6,6 +6,7 @@
 ## IconTexture: Interface\AddOns\DoYouNeedThat\Media\dynt.png
 ## Notes: Pesters people for loot because Personal Loot is fun!
 ## SavedVariables: DyntDB
+## OptionalDeps: LibSharedMedia-3.0, SharedMedia
 
 ## DefaultState: Enabled
 

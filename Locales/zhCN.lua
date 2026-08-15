@@ -5,6 +5,8 @@ L = L or {}
 
 L["Click to toggle window"] = "点击打开窗口"
 L["Debug"] = "Debug"
+L["Default Font"] = "默认字体"
+L["Font"] = "字体"
 L["Default Whisper Message"] = "你需要[item]吗？"
 L["Hide minimap button"] = "隐藏小地图图标"
 L["ILvl"] = "装等"

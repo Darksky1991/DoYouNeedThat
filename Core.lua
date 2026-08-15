@@ -313,6 +313,7 @@ function AddOn:ADDON_LOADED(addon)
 				openAfterEncounter = true,
 				debug = false,
 				minDelta = 0,
+				fontName = nil,
 			},
             minimap = {
                 hide = false
@@ -334,6 +335,10 @@ function AddOn:ADDON_LOADED(addon)
 
 	-- Replace config with saved one
 	self.Config = self.db.config
+	if self.Config.fontName == "" then
+		self.Config.fontName = nil
+	end
+	self:ApplyGlobalFont()
 
     icon:Register("DoYouNeedThat", LDB, self.db.minimap)
     if not self.db.minimap.hide then
