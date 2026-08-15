@@ -449,7 +449,6 @@ function AddOn:CreateOptionsFrame()
     options.whisperMessage:SetAutoFocus(false)
     options.whisperMessage:SetMaxLetters(128)
     options.whisperMessage:SetFontObject("dynt_options_text")
-    AddOn.Debug(AddOn.Config.whisperMessage)
     if AddOn.Config.whisperMessage then options.whisperMessage:SetText(AddOn.Config.whisperMessage) end
     options.whisperMessage:SetCursorPosition(0)
     options.whisperMessage:SetScript("OnEditFocusGained", function() --[[ Override to not highlight the text ]] end)

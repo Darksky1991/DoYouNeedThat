@@ -12,7 +12,7 @@
 
 Libs\LibStub.lua
 Libs\CallbackHandler-1.0.lua
-Libs\LibInspect.lua
+Libs\DyntInspect.lua
 Libs\LibDataBroker-1.1.lua
 Libs\LibDBIcon-1.0.lua
 
