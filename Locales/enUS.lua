@@ -28,6 +28,7 @@ L["Item is not equippable by your class"] = "Item is not equippable by your clas
 L["Item is not contain your class"] = "Item is not contain your class"
 L["Item is Bind to Account until equip"] = "Item is Bind to Account until equip"
 L["Item is below itemlevel threshold"] = "Item is below itemlevel threshold"
+L["Ignoring player loot"] = "Ignoring player loot"
 L["Not in instance, unregistering events"] = "Not in instance, unregistering events"
 L["Commands:"] = "Commands:"
 L["Show command help"] = "Show command help"

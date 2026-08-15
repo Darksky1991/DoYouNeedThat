@@ -1,7 +1,7 @@
 local AddonName, AddOn = ...
 
 -- Localize
-local print, gsub, sfind = print, string.gsub, string.find
+local print, gsub, sfind, strlower = print, string.gsub, string.find, string.lower
 local GetItemInfo, IsEquippableItem = C_Item.GetItemInfo, C_Item.IsEquippableItem
 local GetInventoryItemLink, UnitClass = GetInventoryItemLink, UnitClass
 local SendChatMessage, UIParent = C_ChatInfo.SendChatMessage, UIParent
@@ -11,6 +11,7 @@ local C_Timer, InCombatLockdown, time = C_Timer, InCombatLockdown, time
 local UnitIsConnected, CanInspect, UnitName = UnitIsConnected, CanInspect, UnitName
 local CheckInteractDistance, UnitIsVisible, UnitExists = CheckInteractDistance, UnitIsVisible, UnitExists
 local ClearInspectPlayer, issecretvalue = ClearInspectPlayer, issecretvalue
+local GetRealmName = GetRealmName
 local RAID_CLASS_COLORS = RAID_CLASS_COLORS
 local CreateFrame, GetDetailedItemLevelInfo = CreateFrame, C_Item.GetDetailedItemLevelInfo
 
@@ -56,6 +57,7 @@ AddOn.InspectFailures = {}
 
 local INSPECT_RETRY_DELAY = 10
 local PENDING_LOOT_MAX_RETRIES = 5
+local TEST_LOOTER = "DYNT-Test"
 
 function AddOn.Print(msg)
 	print("[|cff3399FFDYNT|r] " .. msg)
@@ -78,6 +80,11 @@ local function IsItemInfoReady(item)
 	return itemId ~= nil and rarity ~= nil and iLvl ~= nil
 end
 
+local function NormalizePlayerName(name)
+	if not name then return nil end
+	return strlower(gsub(name, "%s+", ""))
+end
+
 -- Loot can arrive before the item cache is populated. Keep one small queue and
 -- retry from both GET_ITEM_INFO_RECEIVED and a short ticker so dropped events do
 -- not silently lose eligible items.
@@ -96,10 +103,35 @@ function AddOn:QueuePendingLoot(item, looter, retries)
 	self.Debug("Queued loot until item info is cached: " .. item)
 end
 
+function AddOn:IsPlayerLooter(looter)
+	if not looter then return false end
+
+	local playerName = UnitName("player")
+	if not playerName then return false end
+
+	local normalizedLooter = NormalizePlayerName(looter)
+	local normalizedPlayer = NormalizePlayerName(playerName)
+	if normalizedLooter == normalizedPlayer then return true end
+
+	local playerFullName = self.Utils and self.Utils.GetUnitNameWithRealm and self.Utils.GetUnitNameWithRealm("player")
+	if not playerFullName then
+		local realm = GetRealmName and GetRealmName()
+		if realm and realm ~= "" then
+			playerFullName = playerName .. "-" .. realm
+		end
+	end
+
+	return normalizedLooter == NormalizePlayerName(playerFullName)
+end
+
 -- Loot flow: CHAT_MSG_LOOT/ENCOUNTER_LOOT_RECEIVED -> ProcessLootItem -> AddItemToLootTable.
 -- Keep all eligibility checks here so real loot and slash-command tests behave the same.
 function AddOn:ProcessLootItem(item, looter)
 	if not item or not looter then return end
+	if self:IsPlayerLooter(looter) then
+		self.Debug(L["Ignoring player loot"])
+		return
+	end
 	if not IsItemInfoReady(item) then
 		self:QueuePendingLoot(item, looter)
 		return
@@ -169,9 +201,6 @@ end
 
 function AddOn:ENCOUNTER_LOOT_RECEIVED(...)
 	local _, _, itemLink, _, playerName = ...
-	local player = UnitName("player")
-	local shortName = playerName and playerName:match("^([^%-]+)")
-	if shortName == player then return end
 	if itemLink and playerName then
 		self:ProcessLootItem(itemLink, playerName)
 	end
@@ -666,15 +695,13 @@ local function SlashCommandHandler(msg)
 	elseif cmd == "clear" then
 		AddOn:ClearEntries()
 	elseif cmd == "test" and args ~= "" then
-		local player = UnitName("player")
 		AddOn:WarmInspectPlayer()
-		AddOn:ProcessLootItem(args, player)
+		AddOn:ProcessLootItem(args, TEST_LOOTER)
 	elseif cmd == "testmsg" and args ~= "" then
-		local player = UnitName("player")
 		AddOn:WarmInspectPlayer()
-		local msg = gsub(LOOT_ITEM, '%%s', player, 1)
+		local msg = gsub(LOOT_ITEM, '%%s', TEST_LOOTER, 1)
 		msg = gsub(msg, '%%s', args, 1)
-		AddOn:CHAT_MSG_LOOT(msg, nil, nil, nil, player);
+		AddOn:CHAT_MSG_LOOT(msg, nil, nil, nil, TEST_LOOTER);
 	elseif cmd == "debug" then
 		AddOn.Config.debug = not AddOn.Config.debug
 		AddOn.Print("Debug mode " .. (AddOn.Config.debug and "enabled" or "disabled"))
