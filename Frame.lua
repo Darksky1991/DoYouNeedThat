@@ -144,11 +144,13 @@ end
 local normal_button_text = CreateFont("dynt_button")
 local large_font = CreateFont("dynt_large_text")
 local normal_font = CreateFont("dynt_normal_text")
+local options_font = CreateFont("dynt_options_text")
 
 AddOn.FontObjects = {
     button = normal_button_text,
     large = large_font,
     normal = normal_font,
+    options = options_font,
 }
 
 local function getFontDisplayName(fontName)
@@ -181,6 +183,7 @@ function AddOn:ApplyGlobalFont()
     applyFontObjectStyle(self.FontObjects.button, path, 12, "CENTER")
     applyFontObjectStyle(self.FontObjects.large, path, 14)
     applyFontObjectStyle(self.FontObjects.normal, path, 11, "CENTER")
+    applyFontObjectStyle(self.FontObjects.options, path, 12, "LEFT")
 
     if self.options and self.options.fontDropdown then
         UIDropDownMenu_SetText(self.options.fontDropdown, getFontDisplayName(fontName))
@@ -420,7 +423,7 @@ function AddOn:CreateOptionsFrame()
     options.debug = CreateFrame("CheckButton", "DYNT_Options_Debug", options, "ChatConfigCheckButtonTemplate")
     options.debug:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -20)
     DYNT_Options_DebugText:SetText(L["Debug"])
-    DYNT_Options_DebugText:SetFontObject("dynt_normal_text")
+    DYNT_Options_DebugText:SetFontObject("dynt_options_text")
     if AddOn.Config.debug then options.debug:SetChecked(true) end
     options.debug:SetScript("OnClick", function(self)
         AddOn.Config.debug = self:GetChecked()
@@ -432,7 +435,7 @@ function AddOn:CreateOptionsFrame()
     options.openAfterEncounter = CreateFrame("CheckButton", "DYNT_Options_OpenAfterEncounter", options, "ChatConfigCheckButtonTemplate")
     options.openAfterEncounter:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -40)
     DYNT_Options_OpenAfterEncounterText:SetText(L["Open loot window after encounter"])
-    DYNT_Options_OpenAfterEncounterText:SetFontObject("dynt_normal_text")
+    DYNT_Options_OpenAfterEncounterText:SetFontObject("dynt_options_text")
     if AddOn.Config.openAfterEncounter then options.openAfterEncounter:SetChecked(true) end
     options.openAfterEncounter:SetScript("OnClick", function(self)
         AddOn.Config.openAfterEncounter = self:GetChecked()
@@ -445,7 +448,7 @@ function AddOn:CreateOptionsFrame()
     options.whisperMessage:SetPoint("TOPLEFT", options, "TOPLEFT", 22, -80)
     options.whisperMessage:SetAutoFocus(false)
     options.whisperMessage:SetMaxLetters(128)
-    options.whisperMessage:SetFontObject("dynt_normal_text")
+    options.whisperMessage:SetFontObject("dynt_options_text")
     AddOn.Debug(AddOn.Config.whisperMessage)
     if AddOn.Config.whisperMessage then options.whisperMessage:SetText(AddOn.Config.whisperMessage) end
     options.whisperMessage:SetCursorPosition(0)
@@ -455,7 +458,7 @@ function AddOn:CreateOptionsFrame()
         self:ClearFocus()
     end)
 
-    local whisperLabel = options.whisperMessage:CreateFontString(nil, "BACKGROUND", "dynt_normal_text")
+    local whisperLabel = options.whisperMessage:CreateFontString(nil, "BACKGROUND", "dynt_options_text")
     whisperLabel:SetPoint("BOTTOMLEFT", options.whisperMessage, "TOPLEFT", 0, 0)
     --whisperLabel:SetPoint("BOTTOMRIGHT", options.whisperMessage, "TOPRIGHT", -6, 0)
     whisperLabel:SetJustifyH("LEFT")
@@ -470,7 +473,7 @@ function AddOn:CreateOptionsFrame()
 	options.hideMinimap = CreateFrame("CheckButton", "DYNT_Options_HideMinimap", options, "ChatConfigCheckButtonTemplate")
 	options.hideMinimap:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -110)
 	DYNT_Options_HideMinimapText:SetText(L["Hide minimap button"])
-	DYNT_Options_HideMinimapText:SetFontObject("dynt_normal_text")
+	DYNT_Options_HideMinimapText:SetFontObject("dynt_options_text")
 	if AddOn.db.minimap.hide then options.hideMinimap:SetChecked(true) end
     options.hideMinimap:SetScript("OnClick", function(self)
         AddOn.db.minimap.hide = self:GetChecked()
@@ -484,6 +487,7 @@ function AddOn:CreateOptionsFrame()
     options.fontDropdown = CreateFrame("Frame", "DYNT_Options_Font", options, "UIDropDownMenuTemplate")
     options.fontDropdown:SetPoint("TOPLEFT", options, "TOPLEFT", 5, -155)
     UIDropDownMenu_SetText(options.fontDropdown, getFontDisplayName(AddOn.Config.fontName))
+    DYNT_Options_FontText:SetFontObject("dynt_options_text")
     UIDropDownMenu_Initialize(options.fontDropdown, function(_, level)
         if level ~= 1 then return end
 
@@ -516,7 +520,7 @@ function AddOn:CreateOptionsFrame()
         end
     end)
 
-    local fontLabel = options.fontDropdown:CreateFontString(nil, "BACKGROUND", "dynt_normal_text")
+    local fontLabel = options.fontDropdown:CreateFontString(nil, "BACKGROUND", "dynt_options_text")
     fontLabel:SetPoint("BOTTOMLEFT", options.fontDropdown, "TOPLEFT", 16, 0)
     fontLabel:SetJustifyH("LEFT")
     fontLabel:SetTextColor(1, 1, 1)
@@ -541,12 +545,12 @@ function AddOn:CreateOptionsFrame()
     DYNT_Options_MinDeltaLow:SetText("0")
     DYNT_Options_MinDeltaHigh:SetText("30")
     DYNT_Options_MinDeltaText:SetText(AddOn.Config.minDelta)
-    DYNT_Options_MinDeltaLow:SetFontObject("dynt_normal_text")
-    DYNT_Options_MinDeltaHigh:SetFontObject("dynt_normal_text")
-    DYNT_Options_MinDeltaText:SetFontObject("dynt_normal_text")
+    DYNT_Options_MinDeltaLow:SetFontObject("dynt_options_text")
+    DYNT_Options_MinDeltaHigh:SetFontObject("dynt_options_text")
+    DYNT_Options_MinDeltaText:SetFontObject("dynt_options_text")
     options.minDelta:Show()
 
-    local minDeltaLabel = options.minDelta:CreateFontString(nil, "BACKGROUND", "dynt_normal_text")
+    local minDeltaLabel = options.minDelta:CreateFontString(nil, "BACKGROUND", "dynt_options_text")
     minDeltaLabel:SetPoint("BOTTOMLEFT", options.minDelta, "TOPLEFT", 0, 20)
     minDeltaLabel:SetJustifyH("LEFT")
     options.minDelta.labelText = minDeltaLabel
@@ -556,6 +560,7 @@ function AddOn:CreateOptionsFrame()
     options.minDelta.labelText:SetText(L["Minimum itemlevels lower"])
 
     local category = Settings.RegisterCanvasLayoutCategory(options, "DoYouNeedThat")
+    self.settingsCategory = category
     Settings.RegisterAddOnCategory(category)
     self:ApplyGlobalFont()
 end

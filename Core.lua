@@ -22,7 +22,7 @@ local icon = LibStub("LibDBIcon-1.0")
 local LDB = LibStub("LibDataBroker-1.1"):NewDataObject("DoYouNeedThat", {
     type = "data source",
     text = "DoYouNeedThat",
-    icon = "Interface\\Icons\\inv_misc_bag_17",
+    icon = "Interface\\AddOns\\DoYouNeedThat\\Media\\dynt.png",
     OnClick = function(_,buttonPressed)
         if buttonPressed == "RightButton" then
             if AddOn.db.minimap.lock then
@@ -30,6 +30,8 @@ local LDB = LibStub("LibDataBroker-1.1"):NewDataObject("DoYouNeedThat", {
             else
                 icon:Lock("DoYouNeedThat")
             end
+        elseif buttonPressed == "MiddleButton" then
+            AddOn:OpenOptions()
         else
             AddOn:ToggleWindow()
         end
@@ -39,6 +41,7 @@ local LDB = LibStub("LibDataBroker-1.1"):NewDataObject("DoYouNeedThat", {
         tooltip:AddLine("DoYouNeedThat")
         tooltip:AddLine(L["Click to toggle window"])
         tooltip:AddLine(L["Right-click to lock Minimap Button"])
+        tooltip:AddLine(L["Middle-click to open options"])
     end,
 })
 
@@ -610,6 +613,12 @@ function AddOn:ToggleWindow()
         self.lootFrame:Hide()
         self.db.lootWindowOpen = false
     end
+end
+
+function AddOn:OpenOptions()
+	if Settings and Settings.OpenToCategory and self.settingsCategory then
+		Settings.OpenToCategory(self.settingsCategory.ID or self.settingsCategory)
+	end
 end
 
 LibInspect:SetMaxAge(599)
