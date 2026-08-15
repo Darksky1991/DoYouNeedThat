@@ -268,16 +268,10 @@ function AddOn:ShowLootFrame()
 end
 
 function AddOn:BOSS_KILL()
-    local _, _, difficulty = GetInstanceInfo()
-	self:ClearEntries()
-    -- Don't open if its M+
-	if self.Config.openAfterEncounter and difficulty ~= 8 then self:ShowLootFrame() end
 end
 
 function AddOn:CHALLENGE_MODE_COMPLETED()
-	self.Debug(L["Challenge mode completed: clearing entries and opening loot window"])
-	self:ClearEntries()
-	self:ShowLootFrame()
+	self.Debug(L["Challenge mode completed"])
 end
 
 function AddOn:ClearGroupState()
