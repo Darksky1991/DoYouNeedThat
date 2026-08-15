@@ -7,17 +7,16 @@ local GetInventoryItemLink, UnitClass = GetInventoryItemLink, UnitClass
 local SendChatMessage, UIParent = C_ChatInfo.SendChatMessage, UIParent
 local select, IsInGroup, GetItemInfoInstant = select, IsInGroup, C_Item.GetItemInfoInstant
 local UnitGUID, IsInRaid, GetNumGroupMembers, GetInstanceInfo = UnitGUID, IsInRaid, GetNumGroupMembers, GetInstanceInfo
-local C_Timer, InCombatLockdown, time = C_Timer, InCombatLockdown, time
-local UnitIsConnected, CanInspect, UnitName = UnitIsConnected, CanInspect, UnitName
-local CheckInteractDistance, UnitIsVisible, UnitExists = CheckInteractDistance, UnitIsVisible, UnitExists
-local ClearInspectPlayer, issecretvalue = ClearInspectPlayer, issecretvalue
+local C_Timer = C_Timer
+local UnitName = UnitName
+local issecretvalue = issecretvalue
 local GetRealmName = GetRealmName
 local RAID_CLASS_COLORS = RAID_CLASS_COLORS
 local CreateFrame, GetDetailedItemLevelInfo = CreateFrame, C_Item.GetDetailedItemLevelInfo
 
 local L = AddOn.L
 local LOOT_ITEM_PATTERN = gsub(LOOT_ITEM, '%%s', '(.+)')
-local LibInspect = LibStub("LibInspect")
+local DyntInspect = LibStub("DyntInspect")
 local _, _, playerClassId = UnitClass("player")
 local icon = LibStub("LibDBIcon-1.0")
 local LDB = LibStub("LibDataBroker-1.1"):NewDataObject("DoYouNeedThat", {
@@ -51,11 +50,8 @@ AddOn.db = {}
 AddOn.Entries = {}
 AddOn.RaidMembers = {}
 AddOn.Config = {}
-AddOn.inspectCount = 1
 AddOn.PendingLoot = {}
-AddOn.InspectFailures = {}
 
-local INSPECT_RETRY_DELAY = 10
 local PENDING_LOOT_MAX_RETRIES = 5
 local TEST_LOOTER = "DYNT-Test"
 
@@ -126,6 +122,34 @@ function AddOn:IsPlayerLooter(looter)
 	end
 
 	return normalizedLooter == NormalizePlayerName(playerFullName)
+end
+
+function AddOn:GetUnitForLooter(looter)
+	if not looter then return nil end
+	local target = NormalizePlayerName(looter)
+	local isInRaid = IsInRaid()
+	local unitPrefix = isInRaid and "raid" or "party"
+	local max = isInRaid and GetNumGroupMembers() or (IsInGroup() and (GetNumGroupMembers() - 1) or 0)
+
+	for i = 1, max do
+		local unit = unitPrefix .. i
+		local name, realm = UnitName(unit)
+		if name then
+			local fullName = name
+			if realm and realm ~= "" then
+				fullName = name .. "-" .. realm
+			else
+				local currentRealm = GetRealmName and GetRealmName()
+				if currentRealm and currentRealm ~= "" then
+					fullName = name .. "-" .. currentRealm
+				end
+			end
+			if target == NormalizePlayerName(name) or target == NormalizePlayerName(fullName) then
+				return unit
+			end
+		end
+	end
+	return nil
 end
 
 -- Loot flow: CHAT_MSG_LOOT/ENCOUNTER_LOOT_RECEIVED -> ProcessLootItem -> AddItemToLootTable.
@@ -256,33 +280,8 @@ function AddOn:CHALLENGE_MODE_COMPLETED()
 	self:ShowLootFrame()
 end
 
-function AddOn:StopInspectTimer()
-	self.InspectEnabled = false
-	if self.InspectTimer then
-		self.InspectTimer:Cancel()
-		self.InspectTimer = nil
-	end
-	if ClearInspectPlayer then
-		ClearInspectPlayer()
-	end
-end
-
-function AddOn:StartInspectTimer()
-	self.InspectEnabled = true
-	if not self.InspectTimer then
-		self.InspectTimer = C_Timer.NewTicker(7, function() self:InspectGroup() end)
-	end
-	C_Timer.After(1, function()
-		if self.InspectEnabled then
-			self:InspectGroup()
-		end
-	end)
-end
-
 function AddOn:ClearGroupState()
 	self.RaidMembers = {}
-	self.InspectFailures = {}
-	self.inspectCount = 1
 end
 
 function AddOn:ClearPendingLoot()
@@ -301,7 +300,7 @@ function AddOn:EnableInstanceEvents()
 	self.EventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
 	self.EventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 	self.EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-	self:StartInspectTimer()
+	DyntInspect:QueueGroup("entering_world", false, false)
 end
 
 function AddOn:DisableInstanceEvents()
@@ -311,7 +310,7 @@ function AddOn:DisableInstanceEvents()
 	self.EventFrame:UnregisterEvent("CHALLENGE_MODE_COMPLETED")
 	self.EventFrame:UnregisterEvent("GROUP_ROSTER_UPDATE")
 	self.EventFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
-	self:StopInspectTimer()
+	DyntInspect:Reset()
 	self:ClearGroupState()
 	self:ClearPendingLoot()
 end
@@ -328,13 +327,13 @@ function AddOn:PLAYER_ENTERING_WORLD()
 end
 
 function AddOn:GROUP_ROSTER_UPDATE()
+	DyntInspect:ClearGroupCache()
 	self:CleanUpGroupCache()
-	self.inspectCount = 1
-	self:StartInspectTimer()
+	DyntInspect:QueueGroup("group_roster_update", true, false)
 end
 
 function AddOn:PLAYER_REGEN_ENABLED()
-	self:InspectGroup()
+	DyntInspect:QueueGroup("regen_enabled", true, false)
 end
 
 function AddOn:ADDON_LOADED(addon)
@@ -377,6 +376,34 @@ function AddOn:ADDON_LOADED(addon)
 		self.Config.fontName = nil
 	end
 	self:ApplyGlobalFont()
+
+	DyntInspect:Configure({
+		cacheMaxAge = 600,
+		requestThrottle = 1.2,
+		inspectTimeout = 2.5,
+		retryDelay = 3,
+		maxAttempts = 4,
+		groupScanDelay = 0.25,
+		minValidItemCount = 3,
+	})
+	DyntInspect:SetDebug(function(msg, ...)
+		local args = {...}
+		for i = 1, #args do
+			if type(args[i]) == "string" and L[args[i]] then
+				args[i] = L[args[i]]
+			end
+		end
+		AddOn.Debug(L[msg] or msg, unpack(args))
+	end)
+	DyntInspect:RegisterCallback(AddonName, function(guid, data)
+		if data and data.items then
+			AddOn.RaidMembers[guid] = {
+				items = data.items,
+				maxAge = data.expiresAt,
+			}
+			AddOn:RefreshEntriesForGUID(guid)
+		end
+	end)
 
     icon:Register("DoYouNeedThat", LDB, self.db.minimap)
     if not self.db.minimap.hide then
@@ -479,12 +506,15 @@ function AddOn:AddItemToLootTable(itemLink, looter, itemLevel)
 	end
 	local _, _, _, equipLoc = GetItemInfoInstant(itemLink)
 	local character = looter:match("(.*)%-") or looter
+	local looterUnit = self:GetUnitForLooter(looter)
+	local looterGuid = looterUnit and UnitGUID(looterUnit)
+	local cached = looterGuid and DyntInspect:GetCached(looterGuid) or DyntInspect:GetCached(looter)
 	local classColor = RAID_CLASS_COLORS[select(2, UnitClass(character))] or { r = 1, g = 1, b = 1 }
 	entry.itemLink = itemLink
 	entry.looter = looter
-	entry.guid = UnitGUID(character)
+	entry.guid = looterGuid or (cached and cached.guid) or UnitGUID(character)
 
-	self:ApplyComparedItemsToEntry(entry, self.RaidMembers[entry.guid], equipLoc)
+	self:ApplyComparedItemsToEntry(entry, self.RaidMembers[entry.guid] or cached, equipLoc)
 
 	entry.name:SetText(character)
 	entry.name:SetTextColor(classColor.r, classColor.g, classColor.b)
@@ -495,6 +525,9 @@ function AddOn:AddItemToLootTable(itemLink, looter, itemLevel)
 
 	entry.whisper:Show()
 	entry:Show()
+	if looterUnit then
+		DyntInspect:QueueUnit(looterUnit, "loot", true, false)
+	end
 	if self.Config.openAfterEncounter then
 		self:ShowLootFrame()
 	end
@@ -521,72 +554,9 @@ function AddOn:SendWhisper(itemLink, looter)
 	SendChatMessage(message, "WHISPER", nil, looter)
 end
 
-function AddOn:InspectPlayerUnit(unit)
-	return LibInspect:RequestData("items", unit, false)
-end
-
-function AddOn:WarmInspectPlayer()
-	self:InspectPlayerUnit("player")
-end
-
--- Inspect is range/visibility/combat sensitive. Failed attempts are treated as
--- temporary backoff only; stale but usable cached gear is replaced on success,
--- not cleared on failure.
-function AddOn:InspectPlayer(unit)
-	if not UnitExists(unit) then
-		return false
-	end
-
-	local guid = UnitGUID(unit)
-	local now = time()
-	local failure = guid and self.InspectFailures[guid]
-	if failure and failure.nextTry and failure.nextTry > now then
-		return false
-	end
-
-	local function delayRetry(reason)
-		if guid then
-			self.InspectFailures[guid] = {
-				nextTry = now + INSPECT_RETRY_DELAY,
-				reason = reason,
-			}
-		end
-		self.Debug(L["Inspect delayed: unit=%s reason=%s"], unit, L[reason] or reason)
-		return false
-	end
-
-	if InCombatLockdown() then
-		return delayRetry("Inspect reason: in combat")
-	end
-
-	if not UnitIsConnected(unit) then
-		return delayRetry("Inspect reason: unit offline")
-	end
-
-	if UnitIsVisible and not UnitIsVisible(unit) then
-		return delayRetry("Inspect reason: unit not visible")
-	end
-
-	if CheckInteractDistance and not CheckInteractDistance(unit, 1) then
-		return delayRetry("Inspect reason: unit out of inspect range")
-	end
-
-	if not CanInspect(unit) then
-		return delayRetry("Inspect reason: cannot inspect unit")
-	end
-
-	local canInspect, unitFound = self:InspectPlayerUnit(unit)
-	if not canInspect or not unitFound then
-		delayRetry("Inspect reason: request not accepted")
-		return false
-	end
-	return true
-end
-
 function AddOn:CleanUpGroupCache()
 	local active = {}
 	local removedMembers = 0
-	local removedFailures = 0
 	local isInRaid = IsInRaid()
 	local max = isInRaid and GetNumGroupMembers() or (IsInGroup() and (GetNumGroupMembers() - 1) or 0)
 	local unit = isInRaid and "raid" or "party"
@@ -605,47 +575,9 @@ function AddOn:CleanUpGroupCache()
 		end
 	end
 
-	for guid in pairs(self.InspectFailures) do
-		if not active[guid] then
-			self.InspectFailures[guid] = nil
-			removedFailures = removedFailures + 1
-		end
+	if removedMembers > 0 then
+		self.Debug(L["Inspect cache cleaned: members=%s failures=%s"], tostring(removedMembers), "0")
 	end
-
-	if removedMembers > 0 or removedFailures > 0 then
-		self.Debug(L["Inspect cache cleaned: members=%s failures=%s"], tostring(removedMembers), tostring(removedFailures))
-	end
-end
-
-function AddOn:InspectGroup()
-	if not self.InspectEnabled then return end
-	local isInRaid = IsInRaid()
-	if not isInRaid and not IsInGroup() or InCombatLockdown() then return end
-	local max = isInRaid and GetNumGroupMembers() or (GetNumGroupMembers() - 1)
-	if max <= 0 then return end
-	local unit = isInRaid and "raid" or "party"
-	local i = self.inspectCount
-	local curTime = time()
-
-	if i > max then
-		i = 1
-	end
-
-	while i <= max do
-		local guid = UnitGUID(unit..i)
-		-- Temporary inspect failures only delay future attempts. Existing cached
-		-- gear stays available until a successful inspect replaces it.
-		if (self.RaidMembers[guid] == nil or self.RaidMembers[guid].maxAge <= curTime) and self:InspectPlayer(unit..i) then
-			break
-		end
-		i = i + 1
-	end
-
-	i = i + 1
-	if i > max then
-		i = 1
-	end
-	self.inspectCount = i
 end
 
 function AddOn:ToggleWindow()
@@ -663,26 +595,6 @@ function AddOn:OpenOptions()
 		Settings.OpenToCategory(self.settingsCategory.ID or self.settingsCategory)
 	end
 end
-
-LibInspect:SetMaxAge(599)
-LibInspect:AddHook(AddonName, "items", function(guid, data)
-	if data then
-		local itemCount = 0
-		for _ in pairs(data.items or {}) do
-			itemCount = itemCount + 1
-		end
-		AddOn.InspectFailures[guid] = nil
-		AddOn.RaidMembers[guid] = {
-			items = data.items,
-			maxAge = time() + 600
-		}
-		AddOn.Debug(L["Inspect cached: guid=%s items=%s"], guid, tostring(itemCount))
-		AddOn:RefreshEntriesForGUID(guid)
-		if ClearInspectPlayer then
-			ClearInspectPlayer()
-		end
-	end
-end)
 
 -- Event handler
 AddOn.EventFrame:SetScript("OnEvent", function(self, event, ...)
@@ -713,10 +625,8 @@ local function SlashCommandHandler(msg)
 	elseif cmd == "clear" then
 		AddOn:ClearEntries()
 	elseif cmd == "test" and args ~= "" then
-		AddOn:WarmInspectPlayer()
 		AddOn:ProcessLootItem(args, TEST_LOOTER)
 	elseif cmd == "testmsg" and args ~= "" then
-		AddOn:WarmInspectPlayer()
 		local msg = gsub(LOOT_ITEM, '%%s', TEST_LOOTER, 1)
 		msg = gsub(msg, '%%s', args, 1)
 		AddOn:CHAT_MSG_LOOT(msg, nil, nil, nil, TEST_LOOTER);
