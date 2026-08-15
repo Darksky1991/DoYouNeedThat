@@ -72,7 +72,7 @@ if not lib.frame then lib.frame = CreateFrame("Frame"); end
 local pairs, tonumber, type, time = pairs, tonumber, type, time;
 local NotifyInspect, CanInspect, UnitIsUnit, InCombatLockdown, UnitGUID, GetInventoryItemLink, GetSpecialization = NotifyInspect, CanInspect, UnitIsUnit, InCombatLockdown, UnitGUID, GetInventoryItemLink, GetSpecialization;
 local GetSpecializationInfo, GetInspectSpecialization, GetSpecializationInfoByID, GetSpecializationRoleByID, UnitClass = GetSpecializationInfo, GetInspectSpecialization, GetSpecializationInfoByID, GetSpecializationRoleByID, UnitClass;
-local GetTalentInfo, RequestInspectHonorData, GetInventoryItemID, GetItemInfo = GetTalentInfo, RequestInspectHonorData, GetInventoryItemID, GetItemInfo;
+local GetTalentInfo, RequestInspectHonorData, GetInventoryItemID, GetItemInfo = GetTalentInfo, RequestInspectHonorData, GetInventoryItemID, GetItemInfo or (C_Item and C_Item.GetItemInfo);
 local NUM_TALENT_COLUMNS, MAX_TALENT_TIERS, INVSLOT_FIRST_EQUIPPED, INVSLOT_LAST_EQUIPPED = NUM_TALENT_COLUMNS, MAX_TALENT_TIERS, INVSLOT_FIRST_EQUIPPED, INVSLOT_LAST_EQUIPPED;
 
 -- GLOBALS: TalentFrame

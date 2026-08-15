@@ -5,12 +5,18 @@ local icon = LibStub("LibDBIcon-1.0")
 local CreateFrame, unpack, GetItemInfo, select = CreateFrame, unpack, C_Item.GetItemInfo, select
 local GetItemInfoInstant = C_Item.GetItemInfoInstant
 local ITEM_QUALITY_COLORS, CreateFont, UIParent = ITEM_QUALITY_COLORS, CreateFont, UIParent
-local tsort, tonumber, xpcall, geterrorhandler = table.sort, tonumber, xpcall, geterrorhandler
+local tsort, tonumber = table.sort, tonumber
 local IsModifiedClick, ChatEdit_InsertLink, DressUpItemLink = IsModifiedClick, ChatEdit_InsertLink, DressUpItemLink
 local ShowUIPanel, GameTooltip = ShowUIPanel, GameTooltip
-local IsAzeriteEmpoweredItemByID = C_AzeriteEmpoweredItem.IsAzeriteEmpoweredItemByID
+local UIDropDownMenu_CreateInfo, UIDropDownMenu_AddButton = UIDropDownMenu_CreateInfo, UIDropDownMenu_AddButton
+local UIDropDownMenu_Initialize, UIDropDownMenu_SetText = UIDropDownMenu_Initialize, UIDropDownMenu_SetText
+local IsAzeriteEmpoweredItemByID = C_AzeriteEmpoweredItem and C_AzeriteEmpoweredItem.IsAzeriteEmpoweredItemByID
 local OpenAzeriteEmpoweredItemUIFromLink = OpenAzeriteEmpoweredItemUIFromLink
 local BackdropTemplateMixin = BackdropTemplateMixin
+local SharedMedia = LibStub("LibSharedMedia-3.0", true)
+
+local DEFAULT_FONT_KEY = "__default"
+local DEFAULT_FONT_PATH = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
 
 local function showItemTooltip(itemLink)
     ShowUIPanel(GameTooltip)
@@ -89,6 +95,7 @@ end
 
 local function setItemBorderColor(frame, item)
     local color = ITEM_QUALITY_COLORS[select(3, GetItemInfo(item))]
+    if not color then return false end
     frame:SetBackdropBorderColor(color.r, color.g, color.b, 1)
     return true
 end
@@ -113,9 +120,9 @@ function AddOn:repositionFrames()
 	end
 end
 
-function AddOn.setItemTooltip(frame, item)
+function AddOn:SetItemTooltip(frame, item)
 	local tex = select(5, GetItemInfoInstant(item))
-	frame.tex:SetTexture(tex)
+	frame.tex:SetTexture(tex or 134400)
 	frame:SetScript("OnEnter", function() showItemTooltip(item) end)
 	frame:SetScript("OnLeave", function() hideItemTooltip() end)
     frame:SetScript("OnClick", function(_, button)
@@ -124,7 +131,7 @@ function AddOn.setItemTooltip(frame, item)
         end
         if IsModifiedClick("DRESSUP") then return DressUpItemLink(item) end
         if button == "RightButton" and IsModifiedClick("EXPANDITEM") then
-            if IsAzeriteEmpoweredItemByID(item) then
+            if IsAzeriteEmpoweredItemByID and OpenAzeriteEmpoweredItemUIFromLink and IsAzeriteEmpoweredItemByID(item) then
                 OpenAzeriteEmpoweredItemUIFromLink(item);
                 return true;
             end
@@ -135,23 +142,60 @@ function AddOn.setItemTooltip(frame, item)
 end
 
 local normal_button_text = CreateFont("dynt_button")
-normal_button_text:SetFont("Interface\\AddOns\\DoYouNeedThat\\Media\\Roboto-Medium.ttf", 12, "")
-normal_button_text:SetTextColor(1,1,1,1)
-normal_button_text:SetShadowColor(0, 0, 0)
-normal_button_text:SetShadowOffset(1, -1)
-normal_button_text:SetJustifyH("CENTER")
-
 local large_font = CreateFont("dynt_large_text")
-large_font:SetFont("Interface\\AddOns\\DoYouNeedThat\\Media\\Roboto-Medium.ttf", 14, "")
-large_font:SetShadowColor(0, 0, 0)
-large_font:SetShadowOffset(1, -1)
-
 local normal_font = CreateFont("dynt_normal_text")
-normal_font:SetFont("Interface\\AddOns\\DoYouNeedThat\\Media\\Roboto-Medium.ttf", 11, "")
-normal_font:SetTextColor(1,1,1,1)
-normal_font:SetShadowColor(0, 0, 0)
-normal_font:SetShadowOffset(1, -1)
-normal_font:SetJustifyH("CENTER")
+local options_font = CreateFont("dynt_options_text")
+
+AddOn.FontObjects = {
+    button = normal_button_text,
+    large = large_font,
+    normal = normal_font,
+    options = options_font,
+}
+
+local function getFontDisplayName(fontName)
+    if not fontName or fontName == DEFAULT_FONT_KEY then return L["Default Font"] end
+    return fontName
+end
+
+local function resolveFontPath(fontName)
+    if fontName and fontName ~= DEFAULT_FONT_KEY and SharedMedia then
+        local path = SharedMedia:Fetch("font", fontName, true)
+        if path then return path end
+    end
+    return DEFAULT_FONT_PATH
+end
+
+local function applyFontObjectStyle(fontObject, path, size, justify)
+    fontObject:SetFont(path, size, "")
+    fontObject:SetTextColor(1, 1, 1, 1)
+    fontObject:SetShadowColor(0, 0, 0)
+    fontObject:SetShadowOffset(1, -1)
+    if justify then fontObject:SetJustifyH(justify) end
+end
+
+function AddOn:ApplyGlobalFont()
+    local fontName = self.Config and self.Config.fontName
+    local path = resolveFontPath(fontName)
+
+    -- These font objects are shared by the loot window, buttons, rows, and
+    -- option labels, so changing them updates the addon UI without rebuilding it.
+    applyFontObjectStyle(self.FontObjects.button, path, 12, "CENTER")
+    applyFontObjectStyle(self.FontObjects.large, path, 14)
+    applyFontObjectStyle(self.FontObjects.normal, path, 11, "CENTER")
+    applyFontObjectStyle(self.FontObjects.options, path, 12, "LEFT")
+
+    if self.options and self.options.fontDropdown then
+        UIDropDownMenu_SetText(self.options.fontDropdown, getFontDisplayName(fontName))
+    end
+end
+
+function AddOn:SetGlobalFont(fontName)
+    self.Config.fontName = fontName ~= DEFAULT_FONT_KEY and fontName or nil
+    self:ApplyGlobalFont()
+end
+
+AddOn:ApplyGlobalFont()
 
 -- Window
 ---@type Frame
@@ -369,15 +413,17 @@ for i = 1, 20 do
 end
 
 --- Options GUI
-function AddOn.createOptionsFrame()
+function AddOn:CreateOptionsFrame()
     local options = CreateFrame("Frame")
     options.name = "DoYouNeedThat"
+    self.options = options
 
     -- Debug toggle
     ---@type CheckButton
     options.debug = CreateFrame("CheckButton", "DYNT_Options_Debug", options, "ChatConfigCheckButtonTemplate")
     options.debug:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -20)
     DYNT_Options_DebugText:SetText(L["Debug"])
+    DYNT_Options_DebugText:SetFontObject("dynt_options_text")
     if AddOn.Config.debug then options.debug:SetChecked(true) end
     options.debug:SetScript("OnClick", function(self)
         AddOn.Config.debug = self:GetChecked()
@@ -389,6 +435,7 @@ function AddOn.createOptionsFrame()
     options.openAfterEncounter = CreateFrame("CheckButton", "DYNT_Options_OpenAfterEncounter", options, "ChatConfigCheckButtonTemplate")
     options.openAfterEncounter:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -40)
     DYNT_Options_OpenAfterEncounterText:SetText(L["Open loot window after encounter"])
+    DYNT_Options_OpenAfterEncounterText:SetFontObject("dynt_options_text")
     if AddOn.Config.openAfterEncounter then options.openAfterEncounter:SetChecked(true) end
     options.openAfterEncounter:SetScript("OnClick", function(self)
         AddOn.Config.openAfterEncounter = self:GetChecked()
@@ -401,6 +448,7 @@ function AddOn.createOptionsFrame()
     options.whisperMessage:SetPoint("TOPLEFT", options, "TOPLEFT", 22, -80)
     options.whisperMessage:SetAutoFocus(false)
     options.whisperMessage:SetMaxLetters(128)
+    options.whisperMessage:SetFontObject("dynt_options_text")
     AddOn.Debug(AddOn.Config.whisperMessage)
     if AddOn.Config.whisperMessage then options.whisperMessage:SetText(AddOn.Config.whisperMessage) end
     options.whisperMessage:SetCursorPosition(0)
@@ -410,7 +458,7 @@ function AddOn.createOptionsFrame()
         self:ClearFocus()
     end)
 
-    local whisperLabel = options.whisperMessage:CreateFontString(nil, "BACKGROUND", "GameFontNormal")
+    local whisperLabel = options.whisperMessage:CreateFontString(nil, "BACKGROUND", "dynt_options_text")
     whisperLabel:SetPoint("BOTTOMLEFT", options.whisperMessage, "TOPLEFT", 0, 0)
     --whisperLabel:SetPoint("BOTTOMRIGHT", options.whisperMessage, "TOPRIGHT", -6, 0)
     whisperLabel:SetJustifyH("LEFT")
@@ -425,6 +473,7 @@ function AddOn.createOptionsFrame()
 	options.hideMinimap = CreateFrame("CheckButton", "DYNT_Options_HideMinimap", options, "ChatConfigCheckButtonTemplate")
 	options.hideMinimap:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -110)
 	DYNT_Options_HideMinimapText:SetText(L["Hide minimap button"])
+	DYNT_Options_HideMinimapText:SetFontObject("dynt_options_text")
 	if AddOn.db.minimap.hide then options.hideMinimap:SetChecked(true) end
     options.hideMinimap:SetScript("OnClick", function(self)
         AddOn.db.minimap.hide = self:GetChecked()
@@ -435,10 +484,54 @@ function AddOn.createOptionsFrame()
         end
     end)
 
+    options.fontDropdown = CreateFrame("Frame", "DYNT_Options_Font", options, "UIDropDownMenuTemplate")
+    options.fontDropdown:SetPoint("TOPLEFT", options, "TOPLEFT", 5, -155)
+    UIDropDownMenu_SetText(options.fontDropdown, getFontDisplayName(AddOn.Config.fontName))
+    DYNT_Options_FontText:SetFontObject("dynt_options_text")
+    UIDropDownMenu_Initialize(options.fontDropdown, function(_, level)
+        if level ~= 1 then return end
+
+        local info = UIDropDownMenu_CreateInfo()
+        info.text = L["Default Font"]
+        info.value = DEFAULT_FONT_KEY
+        info.checked = not AddOn.Config.fontName
+        info.func = function()
+            AddOn:SetGlobalFont(DEFAULT_FONT_KEY)
+        end
+        UIDropDownMenu_AddButton(info)
+
+        if SharedMedia then
+            local fontList = SharedMedia:List("font")
+            local fonts = {}
+            for _, fontName in ipairs(fontList or {}) do
+                fonts[#fonts + 1] = fontName
+            end
+            tsort(fonts)
+            for _, fontName in ipairs(fonts) do
+                info = UIDropDownMenu_CreateInfo()
+                info.text = fontName
+                info.value = fontName
+                info.checked = AddOn.Config.fontName == fontName
+                info.func = function(self)
+                    AddOn:SetGlobalFont(self.value)
+                end
+                UIDropDownMenu_AddButton(info)
+            end
+        end
+    end)
+
+    local fontLabel = options.fontDropdown:CreateFontString(nil, "BACKGROUND", "dynt_options_text")
+    fontLabel:SetPoint("BOTTOMLEFT", options.fontDropdown, "TOPLEFT", 16, 0)
+    fontLabel:SetJustifyH("LEFT")
+    fontLabel:SetTextColor(1, 1, 1)
+    fontLabel:SetShadowColor(0, 0, 0)
+    fontLabel:SetShadowOffset(1, -1)
+    fontLabel:SetText(L["Font"])
+
     options.minDelta = CreateFrame("Slider", "DYNT_Options_MinDelta", options, "OptionsSliderTemplate")
     options.minDelta:SetWidth(100)
     options.minDelta:SetHeight(20)
-    options.minDelta:SetPoint("TOPLEFT", 22, -170)
+    options.minDelta:SetPoint("TOPLEFT", 22, -220)
     options.minDelta:SetOrientation("HORIZONTAL")
     options.minDelta:SetMinMaxValues(0, 30)
     options.minDelta:SetValue(AddOn.Config.minDelta)
@@ -452,9 +545,12 @@ function AddOn.createOptionsFrame()
     DYNT_Options_MinDeltaLow:SetText("0")
     DYNT_Options_MinDeltaHigh:SetText("30")
     DYNT_Options_MinDeltaText:SetText(AddOn.Config.minDelta)
+    DYNT_Options_MinDeltaLow:SetFontObject("dynt_options_text")
+    DYNT_Options_MinDeltaHigh:SetFontObject("dynt_options_text")
+    DYNT_Options_MinDeltaText:SetFontObject("dynt_options_text")
     options.minDelta:Show()
 
-    local minDeltaLabel = options.minDelta:CreateFontString(nil, "BACKGROUND", "GameFontNormal")
+    local minDeltaLabel = options.minDelta:CreateFontString(nil, "BACKGROUND", "dynt_options_text")
     minDeltaLabel:SetPoint("BOTTOMLEFT", options.minDelta, "TOPLEFT", 0, 20)
     minDeltaLabel:SetJustifyH("LEFT")
     options.minDelta.labelText = minDeltaLabel
@@ -464,5 +560,7 @@ function AddOn.createOptionsFrame()
     options.minDelta.labelText:SetText(L["Minimum itemlevels lower"])
 
     local category = Settings.RegisterCanvasLayoutCategory(options, "DoYouNeedThat")
+    self.settingsCategory = category
     Settings.RegisterAddOnCategory(category)
+    self:ApplyGlobalFont()
 end
