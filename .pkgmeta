@@ -4,3 +4,5 @@ license-output: LICENSE
 
 ignore:
  - TODO.txt
+ - docs/
+ - tests/
