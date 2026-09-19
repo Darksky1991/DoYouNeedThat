@@ -4,15 +4,18 @@ local AddonName, AddOn = ...
 local print, gsub, sfind, strlower, format = print, string.gsub, string.find, string.lower, string.format
 local GetItemInfo, IsEquippableItem = C_Item.GetItemInfo, C_Item.IsEquippableItem
 local GetInventoryItemLink, UnitClass = GetInventoryItemLink, UnitClass
-local SendChatMessage, UIParent = C_ChatInfo.SendChatMessage, UIParent
+local SendChatMessage, InChatMessagingLockdown = C_ChatInfo.SendChatMessage, C_ChatInfo.InChatMessagingLockdown
+local UIParent = UIParent
 local select, IsInGroup, GetItemInfoInstant = select, IsInGroup, C_Item.GetItemInfoInstant
 local UnitGUID, IsInRaid, GetNumGroupMembers, GetInstanceInfo = UnitGUID, IsInRaid, GetNumGroupMembers, GetInstanceInfo
 local C_Timer = C_Timer
+local GetTime = GetTime
 local UnitName = UnitName
 local issecretvalue = issecretvalue
 local GetRealmName = GetRealmName
 local RAID_CLASS_COLORS = RAID_CLASS_COLORS
 local CreateFrame, GetDetailedItemLevelInfo = CreateFrame, C_Item.GetDetailedItemLevelInfo
+local C_TooltipInfo = C_TooltipInfo
 
 local L = AddOn.L
 local LOOT_ITEM_PATTERN = gsub(LOOT_ITEM, '%%s', '(.+)')
@@ -85,13 +88,43 @@ local function NormalizePlayerName(name)
 	return strlower(gsub(name, "%s+", ""))
 end
 
+local function GetItemIdentity(item)
+	if not item then return nil end
+	return item:match("|H(item:[^|]+)|h")
+		or item:match("(item:[^|]+)")
+		or tostring(C_Item.GetItemInfoInstant(item) or item)
+end
+
+function AddOn:GetLooterIdentity(looter)
+	if not looter then return nil end
+	local unit = self:GetUnitForLooter(looter)
+	local resolvedName = unit and self.Utils and self.Utils.GetUnitNameWithRealm
+		and self.Utils.GetUnitNameWithRealm(unit)
+	local normalized = NormalizePlayerName(resolvedName or looter)
+	if normalized and not sfind(normalized, "-", 1, true) then
+		local realm = GetRealmName and GetRealmName()
+		if realm and realm ~= "" then
+			normalized = normalized .. "-" .. NormalizePlayerName(realm)
+		end
+	end
+	return normalized
+end
+
+function AddOn:GetLootKey(item, looter)
+	local itemIdentity = GetItemIdentity(item)
+	local looterIdentity = self:GetLooterIdentity(looter)
+	if not itemIdentity or not looterIdentity then return nil end
+	return itemIdentity .. "\031" .. looterIdentity
+end
+
 -- Loot can arrive before the item cache is populated. Keep one small queue and
 -- retry from both GET_ITEM_INFO_RECEIVED and a short ticker so dropped events do
 -- not silently lose eligible items.
 function AddOn:QueuePendingLoot(item, looter, retries)
 	if not item or not looter then return end
-	local itemId = self.Utils.GetItemIDFromLink(item) or item
-	self.PendingLoot[itemId] = {
+	local lootKey = self:GetLootKey(item, looter)
+	if not lootKey then return end
+	self.PendingLoot[lootKey] = {
 		item = item,
 		looter = looter,
 		retries = retries or 0,
@@ -226,16 +259,15 @@ function AddOn:CHAT_MSG_LOOT(...)
 
 	local parsedLooter, item = message:match(LOOT_ITEM_PATTERN)
 	item = item or ExtractItemLink(message)
-	looter = looter or parsedLooter
+	if not looter or looter == "" then looter = parsedLooter end
 
 	self:ProcessLootItem(item, looter)
 end
 
 function AddOn:ENCOUNTER_LOOT_RECEIVED(...)
-	local _, _, itemLink, _, playerName = ...
-	if itemLink and playerName then
-		self:ProcessLootItem(itemLink, playerName)
-	end
+	-- ENCOUNTER_LOOT_RECEIVED can arrive while group loot is still being
+	-- resolved. CHAT_MSG_LOOT is the authoritative source once a recipient is
+	-- known, so this event intentionally never creates a row.
 end
 
 function AddOn:GET_ITEM_INFO_RECEIVED()
@@ -289,17 +321,19 @@ end
 
 function AddOn:EnableInstanceEvents()
 	self.EventFrame:RegisterEvent("CHAT_MSG_LOOT")
-	self.EventFrame:RegisterEvent("ENCOUNTER_LOOT_RECEIVED")
 	self.EventFrame:RegisterEvent("BOSS_KILL")
 	self.EventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
 	self.EventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 	self.EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-	DyntInspect:QueueGroup("entering_world", false, false)
+	if DyntInspect.StartGroupScan then
+		DyntInspect:StartGroupScan("entering_world")
+	else
+		DyntInspect:QueueGroup("entering_world", false, false)
+	end
 end
 
 function AddOn:DisableInstanceEvents()
 	self.EventFrame:UnregisterEvent("CHAT_MSG_LOOT")
-	self.EventFrame:UnregisterEvent("ENCOUNTER_LOOT_RECEIVED")
 	self.EventFrame:UnregisterEvent("BOSS_KILL")
 	self.EventFrame:UnregisterEvent("CHALLENGE_MODE_COMPLETED")
 	self.EventFrame:UnregisterEvent("GROUP_ROSTER_UPDATE")
@@ -323,11 +357,27 @@ end
 function AddOn:GROUP_ROSTER_UPDATE()
 	DyntInspect:ClearGroupCache()
 	self:CleanUpGroupCache()
-	DyntInspect:QueueGroup("group_roster_update", true, false)
+	DyntInspect:QueueGroup("group_roster_update", false, false)
 end
 
 function AddOn:PLAYER_REGEN_ENABLED()
-	DyntInspect:QueueGroup("regen_enabled", true, false)
+	DyntInspect:QueueGroup("regen_enabled", false, false)
+end
+
+function AddOn:OnInspectData(guid, data, reason)
+	if data and data.items then
+		self.RaidMembers[guid] = {
+			items = data.items,
+			maxAge = data.expiresAt,
+			name = data.name,
+			unit = data.unit,
+			complete = data.complete,
+			count = data.count,
+		}
+		self:RefreshEntriesForGUID(guid)
+	elseif reason == "invalidated" then
+		self.RaidMembers[guid] = nil
+	end
 end
 
 function AddOn:ADDON_LOADED(addon)
@@ -345,6 +395,8 @@ function AddOn:ADDON_LOADED(addon)
 				debug = false,
 				minDelta = 0,
 				fontName = nil,
+				ignoreLooterItemLevelUpgrades = false,
+				ignoreLooterTrackUpgrades = false,
 			},
             minimap = {
                 hide = false
@@ -357,6 +409,12 @@ function AddOn:ADDON_LOADED(addon)
 	-- Set minDelta default if its not a fresh install
 	if not self.db.config.minDelta then
 		self.db.config.minDelta = 0
+	end
+	if self.db.config.ignoreLooterItemLevelUpgrades == nil then
+		self.db.config.ignoreLooterItemLevelUpgrades = false
+	end
+	if self.db.config.ignoreLooterTrackUpgrades == nil then
+		self.db.config.ignoreLooterTrackUpgrades = false
 	end
 
 	-- Set window position
@@ -377,8 +435,9 @@ function AddOn:ADDON_LOADED(addon)
 		inspectTimeout = 2.5,
 		retryDelay = 3,
 		maxAttempts = 4,
-		groupScanDelay = 0.25,
-		minValidItemCount = 3,
+		failureCooldown = 15,
+		groupScanInterval = 10,
+		minValidItemCount = 8,
 	})
 	DyntInspect:SetDebug(function(msg, ...)
 		local args = {...}
@@ -389,14 +448,8 @@ function AddOn:ADDON_LOADED(addon)
 		end
 		AddOn.Debug(L[msg] or msg, unpack(args))
 	end)
-	DyntInspect:RegisterCallback(AddonName, function(guid, data)
-		if data and data.items then
-			AddOn.RaidMembers[guid] = {
-				items = data.items,
-				maxAge = data.expiresAt,
-			}
-			AddOn:RefreshEntriesForGUID(guid)
-		end
+	DyntInspect:RegisterCallback(AddonName, function(guid, data, reason)
+		AddOn:OnInspectData(guid, data, reason)
 	end)
 
     icon:Register("DoYouNeedThat", LDB, self.db.minimap)
@@ -454,6 +507,7 @@ function AddOn:ClearEntries()
 			self.Entries[i].itemLink = nil
 			self.Entries[i].looter = nil
 			self.Entries[i].guid = nil
+			self.Entries[i].lootKey = nil
 			cleared = cleared + 1
 		end
 	end
@@ -461,27 +515,184 @@ function AddOn:ClearEntries()
 end
 
 function AddOn:AcquireEntry(itemLink, looter)
+	local lootKey = self:GetLootKey(itemLink, looter)
+	local emptyEntry
 	for i = 1, #self.Entries do
-		if self.Entries[i].itemLink == itemLink and self.Entries[i].looter == looter then
-			return self.Entries[i]
+		local entry = self.Entries[i]
+		local entryKey = entry.lootKey
+		if not entryKey and entry.itemLink and entry.looter then
+			entryKey = self:GetLootKey(entry.itemLink, entry.looter)
 		end
-
-		if not self.Entries[i].itemLink then
-			return self.Entries[i]
+		if lootKey and entryKey == lootKey then
+			return entry
+		end
+		if not emptyEntry and not entry.itemLink then
+			emptyEntry = entry
 		end
 	end
+	return emptyEntry
+end
+
+function AddOn:RemoveEntry(entry)
+	if not entry then return end
+	entry.itemLink = nil
+	entry.looter = nil
+	entry.guid = nil
+	entry.lootKey = nil
+	entry:Hide()
+	if self.repositionFrames then
+		self:repositionFrames(false)
+	end
+end
+
+local UPGRADE_TRACK_ALIASES = {
+	["explorer"] = 1,
+	["adventurer"] = 2,
+	["veteran"] = 3,
+	["champion"] = 4,
+	["hero"] = 5,
+	["myth"] = 6,
+	["mythic"] = 6,
+	["探索者"] = 1,
+	["冒险者"] = 2,
+	["老兵"] = 3,
+	["勇士"] = 4,
+	["英雄"] = 5,
+	["神话"] = 6,
+}
+
+function AddOn:GetUpgradeTrackRank(itemLink)
+	if not itemLink or not C_TooltipInfo or not C_TooltipInfo.GetHyperlink then return nil end
+	local ok, tooltipData = pcall(C_TooltipInfo.GetHyperlink, itemLink)
+	if not ok then return nil end
+	if not tooltipData or not tooltipData.lines then return nil end
+	for _, line in ipairs(tooltipData.lines) do
+		local text = line.leftText
+		if text and text:match("%d+%s*/%s*%d+") then
+			text = strlower(gsub(gsub(text, "\194\160", " "), "\226\128\175", " "))
+			for alias, rank in pairs(UPGRADE_TRACK_ALIASES) do
+				if sfind(text, alias, 1, true) then return rank end
+			end
+		end
+	end
+	return nil
+end
+
+local function IsTwoHandEquipLoc(equipLoc)
+	return equipLoc == "INVTYPE_2HWEAPON"
+		or equipLoc == "INVTYPE_RANGED"
+		or equipLoc == "INVTYPE_RANGEDRIGHT"
+end
+
+local function IsOffHandEquipLoc(equipLoc)
+	return equipLoc == "INVTYPE_WEAPONOFFHAND"
+		or equipLoc == "INVTYPE_SHIELD"
+		or equipLoc == "INVTYPE_HOLDABLE"
+end
+
+local function IsOffHandWeapon(equipLoc)
+	return equipLoc == "INVTYPE_WEAPON" or equipLoc == "INVTYPE_WEAPONOFFHAND"
+end
+
+local function GetEquipLoc(itemLink)
+	if not itemLink then return nil end
+	local _, _, _, equipLoc = GetItemInfoInstant(itemLink)
+	return equipLoc
+end
+
+local function GetRecipientComparison(itemEquipLoc, items)
+	if not items then return nil end
+	if itemEquipLoc == "INVTYPE_FINGER" then
+		if not items[INVSLOT_FINGER1] or not items[INVSLOT_FINGER2] then return nil end
+		return { items[INVSLOT_FINGER1], items[INVSLOT_FINGER2] }, "min"
+	elseif itemEquipLoc == "INVTYPE_TRINKET" then
+		if not items[INVSLOT_TRINKET1] or not items[INVSLOT_TRINKET2] then return nil end
+		return { items[INVSLOT_TRINKET1], items[INVSLOT_TRINKET2] }, "min"
+	end
+
+	local mainHand, offHand = items[INVSLOT_MAINHAND], items[INVSLOT_OFFHAND]
+	local mainEquipLoc = GetEquipLoc(mainHand)
+	local offEquipLoc = GetEquipLoc(offHand)
+	if IsTwoHandEquipLoc(itemEquipLoc) then
+		if not mainHand or not mainEquipLoc then return nil end
+		if IsTwoHandEquipLoc(mainEquipLoc) then return { mainHand }, "single" end
+		if not offHand then return nil end
+		return { mainHand, offHand }, "max"
+	elseif itemEquipLoc == "INVTYPE_WEAPON" then
+		if not mainHand or not mainEquipLoc or not offHand or not offEquipLoc or IsTwoHandEquipLoc(mainEquipLoc) then return nil end
+		local comparable = { mainHand }
+		if IsOffHandWeapon(offEquipLoc) then comparable[#comparable + 1] = offHand end
+		return comparable, #comparable == 2 and "min" or "single"
+	elseif itemEquipLoc == "INVTYPE_WEAPONMAINHAND" then
+		if not mainHand or not mainEquipLoc or IsTwoHandEquipLoc(mainEquipLoc) then return nil end
+		return { mainHand }, "single"
+	elseif IsOffHandEquipLoc(itemEquipLoc) then
+		if not mainHand or not mainEquipLoc or not offHand or IsTwoHandEquipLoc(mainEquipLoc) then return nil end
+		return { offHand }, "single"
+	end
+
+	local slotId = AddOn.Utils.GetSlotID(itemEquipLoc)
+	if not slotId or not items[slotId] then return nil end
+	return { items[slotId] }, "single"
+end
+
+local function IsMetricHigher(itemLink, equippedLinks, reduction, metric)
+	local dropped = metric(itemLink)
+	if not dropped then return nil end
+	local baseline
+	for _, equippedLink in ipairs(equippedLinks) do
+		local value = metric(equippedLink)
+		if not value then return nil end
+		if not baseline
+			or (reduction == "min" and value < baseline)
+			or (reduction == "max" and value > baseline) then
+			baseline = value
+		end
+	end
+	return baseline ~= nil and dropped > baseline or false
+end
+
+function AddOn:ShouldIgnoreLootForRecipient(itemLink, equipLoc, raidMember)
+	if not raidMember or not raidMember.items then return false end
+	local equippedLinks, reduction = GetRecipientComparison(equipLoc, raidMember.items)
+	if not equippedLinks then return false end
+	if self.Config.ignoreLooterItemLevelUpgrades then
+		local higher = IsMetricHigher(itemLink, equippedLinks, reduction, GetDetailedItemLevelInfo)
+		if higher then return true end
+	end
+	if self.Config.ignoreLooterTrackUpgrades then
+		local higher = IsMetricHigher(itemLink, equippedLinks, reduction, function(link)
+			return self:GetUpgradeTrackRank(link)
+		end)
+		if higher then return true end
+	end
+	return false
+end
+
+local function GetComparedSlotIdsForEquipLoc(equipLoc)
+	if equipLoc == "INVTYPE_FINGER" then
+		return { INVSLOT_FINGER1, INVSLOT_FINGER2 }
+	elseif equipLoc == "INVTYPE_TRINKET" then
+		return { INVSLOT_TRINKET1, INVSLOT_TRINKET2 }
+	elseif equipLoc == "INVTYPE_WEAPON" or IsTwoHandEquipLoc(equipLoc) or IsOffHandEquipLoc(equipLoc) then
+		return { INVSLOT_MAINHAND, INVSLOT_OFFHAND }
+	end
+	local slotId = AddOn.Utils.GetSlotID(equipLoc)
+	return slotId and { slotId } or {}
 end
 
 local function GetComparedItemsForEquipLoc(raidMember, equipLoc)
 	if not raidMember then return nil, nil end
-	if equipLoc == "INVTYPE_FINGER" then
-		return raidMember.items[11], raidMember.items[12]
-	elseif equipLoc == "INVTYPE_TRINKET" then
-		return raidMember.items[13], raidMember.items[14]
-	else
-		local slotId = AddOn.Utils.GetSlotID(equipLoc)
-		return slotId and raidMember.items[slotId], nil
+	local slots = GetComparedSlotIdsForEquipLoc(equipLoc)
+	return slots[1] and raidMember.items[slots[1]], slots[2] and raidMember.items[slots[2]]
+end
+
+local function HasRequiredEquipment(raidMember, requiredSlots)
+	if not raidMember or not raidMember.items then return false end
+	for _, slotId in ipairs(requiredSlots) do
+		if raidMember.items[slotId] == nil then return false end
 	end
+	return #requiredSlots > 0
 end
 
 function AddOn:ApplyComparedItemsToEntry(entry, raidMember, equipLoc)
@@ -503,12 +714,28 @@ function AddOn:AddItemToLootTable(itemLink, looter, itemLevel)
 	local looterUnit = self:GetUnitForLooter(looter)
 	local looterGuid = looterUnit and UnitGUID(looterUnit)
 	local cached = looterGuid and DyntInspect:GetCached(looterGuid) or DyntInspect:GetCached(looter)
+	local currentTime = GetTime and GetTime()
+	if cached and currentTime and cached.expiresAt and cached.expiresAt <= currentTime then
+		cached = nil
+	end
+	local raidMember = self.RaidMembers[looterGuid] or cached
+	if raidMember and currentTime and raidMember.maxAge and raidMember.maxAge <= currentTime then
+		if looterGuid then self.RaidMembers[looterGuid] = nil end
+		raidMember = cached
+	end
+	local requiredSlots = GetComparedSlotIdsForEquipLoc(equipLoc)
 	local classColor = RAID_CLASS_COLORS[select(2, UnitClass(character))] or { r = 1, g = 1, b = 1 }
+	if self:ShouldIgnoreLootForRecipient(itemLink, equipLoc, raidMember) then
+		if entry.itemLink then self:RemoveEntry(entry) end
+		self.Debug(L["Loot skipped: recipient upgrade item=%s looter=%s"], itemLink, looter)
+		return
+	end
 	entry.itemLink = itemLink
 	entry.looter = looter
 	entry.guid = looterGuid or (cached and cached.guid) or UnitGUID(character)
+	entry.lootKey = self:GetLootKey(itemLink, looter)
 
-	self:ApplyComparedItemsToEntry(entry, self.RaidMembers[entry.guid] or cached, equipLoc)
+	self:ApplyComparedItemsToEntry(entry, self.RaidMembers[entry.guid] or raidMember, equipLoc)
 
 	entry.name:SetText(character)
 	entry.name:SetTextColor(classColor.r, classColor.g, classColor.b)
@@ -519,8 +746,10 @@ function AddOn:AddItemToLootTable(itemLink, looter, itemLevel)
 
 	entry.whisper:Show()
 	entry:Show()
-	if looterUnit then
-		DyntInspect:QueueUnit(looterUnit, "loot", true, false)
+	local inspectUnit = looterUnit or (cached and cached.unit)
+	if inspectUnit then
+		local force = not HasRequiredEquipment(raidMember, requiredSlots)
+		DyntInspect:QueueUnit(inspectUnit, "loot", true, force, requiredSlots)
 	end
 	if self.Config.openAfterEncounter then
 		self:ShowLootFrame()
@@ -535,9 +764,17 @@ function AddOn:RefreshEntriesForGUID(guid)
 	-- rows in place instead of requiring the item to be added again.
 	for i = 1, #self.Entries do
 		local entry = self.Entries[i]
-		if entry.guid == guid and entry.itemLink then
+		local sameName = not entry.guid and raidMember.name
+			and self:GetLooterIdentity(entry.looter) == self:GetLooterIdentity(raidMember.name)
+		if entry.itemLink and (entry.guid == guid or sameName) then
+			entry.guid = guid
 			local _, _, _, equipLoc = GetItemInfoInstant(entry.itemLink)
-			self:ApplyComparedItemsToEntry(entry, raidMember, equipLoc)
+			if self:ShouldIgnoreLootForRecipient(entry.itemLink, equipLoc, raidMember) then
+				self.Debug(L["Loot skipped after inspect: recipient upgrade item=%s looter=%s"], entry.itemLink, entry.looter)
+				self:RemoveEntry(entry)
+			else
+				self:ApplyComparedItemsToEntry(entry, raidMember, equipLoc)
+			end
 		end
 	end
 end
@@ -545,7 +782,23 @@ end
 function AddOn:SendWhisper(itemLink, looter)
 	-- Replace [item] with itemLink if supplied
 	local message = self.Config.whisperMessage:gsub("%[item%]", itemLink)
-	SendChatMessage(message, "WHISPER", nil, looter)
+	if InChatMessagingLockdown and InChatMessagingLockdown() then
+		self.Print(L["Whisper failed: chat messaging is restricted"])
+		return false
+	end
+	local ok, err = pcall(SendChatMessage, message, "WHISPER", nil, looter)
+	if not ok then
+		self.Print(format(L["Whisper failed: %s"], tostring(err)))
+		return false
+	end
+	return true
+end
+
+function AddOn:HandleWhisperClick(entry)
+	if not entry or not entry.itemLink or not entry.looter then return false end
+	if not self:SendWhisper(entry.itemLink, entry.looter) then return false end
+	entry.whisper:Hide()
+	return true
 end
 
 function AddOn:CleanUpGroupCache()
