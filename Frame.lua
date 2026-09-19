@@ -100,16 +100,19 @@ local function setItemBorderColor(frame, item)
     return true
 end
 
-function AddOn:repositionFrames()
+function AddOn:repositionFrames(sortEntries)
 	local lastentry = nil
 
-	tsort(AddOn.Entries, function(a,b)
-		return tonumber(a.ilvl:GetText()) > tonumber(b.ilvl:GetText())
-	end)
+	if sortEntries ~= false then
+		tsort(AddOn.Entries, function(a,b)
+			return tonumber(a.ilvl:GetText()) > tonumber(b.ilvl:GetText())
+		end)
+	end
 
 	for i = 1, #AddOn.Entries do
 		local currententry = AddOn.Entries[i]
 		if currententry.itemLink then
+			currententry:ClearAllPoints()
 			if lastentry then
 				currententry:SetPoint("TOPLEFT", lastentry, "BOTTOMLEFT", 0, 1)
 			else
@@ -389,8 +392,7 @@ for i = 1, 20 do
 	entry.whisper:SetText(L["Whisper"])
 	skinButton(entry.whisper, true, "blue")
 	entry.whisper:SetScript("OnClick", function() 
-		AddOn:SendWhisper(entry.itemLink, entry.looter)
-		entry.whisper:Hide()
+		AddOn:HandleWhisperClick(entry)
 	end)
 	entry.whisper:Hide()
 
@@ -401,11 +403,7 @@ for i = 1, 20 do
 	entry.delete:SetText("x")
 	skinButton(entry.delete, true, "red")
 	entry.delete:SetScript("OnClick", function()
-		entry.itemLink = nil
-		entry.looter = nil
-		entry:Hide()
-		-- Re order
-		AddOn:repositionFrames()
+		AddOn:RemoveEntry(entry)
 	end)
 
 	lastframe = entry
@@ -441,11 +439,29 @@ function AddOn:CreateOptionsFrame()
         AddOn.Config.openAfterEncounter = self:GetChecked()
     end)
 
+    options.ignoreLooterItemLevelUpgrades = CreateFrame("CheckButton", "DYNT_Options_IgnoreLooterItemLevelUpgrades", options, "ChatConfigCheckButtonTemplate")
+    options.ignoreLooterItemLevelUpgrades:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -60)
+    DYNT_Options_IgnoreLooterItemLevelUpgradesText:SetText(L["Ignore higher item level for looter"])
+    DYNT_Options_IgnoreLooterItemLevelUpgradesText:SetFontObject("dynt_options_text")
+    options.ignoreLooterItemLevelUpgrades:SetChecked(AddOn.Config.ignoreLooterItemLevelUpgrades)
+    options.ignoreLooterItemLevelUpgrades:SetScript("OnClick", function(self)
+        AddOn.Config.ignoreLooterItemLevelUpgrades = self:GetChecked()
+    end)
+
+    options.ignoreLooterTrackUpgrades = CreateFrame("CheckButton", "DYNT_Options_IgnoreLooterTrackUpgrades", options, "ChatConfigCheckButtonTemplate")
+    options.ignoreLooterTrackUpgrades:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -80)
+    DYNT_Options_IgnoreLooterTrackUpgradesText:SetText(L["Ignore higher upgrade track for looter"])
+    DYNT_Options_IgnoreLooterTrackUpgradesText:SetFontObject("dynt_options_text")
+    options.ignoreLooterTrackUpgrades:SetChecked(AddOn.Config.ignoreLooterTrackUpgrades)
+    options.ignoreLooterTrackUpgrades:SetScript("OnClick", function(self)
+        AddOn.Config.ignoreLooterTrackUpgrades = self:GetChecked()
+    end)
+
     -- Whisper message
     --@type EditBox
     options.whisperMessage = CreateFrame("EditBox", "DYNT_Options_WhisperMessage", options, "InputBoxTemplate")
     options.whisperMessage:SetSize(200, 32)
-    options.whisperMessage:SetPoint("TOPLEFT", options, "TOPLEFT", 22, -80)
+    options.whisperMessage:SetPoint("TOPLEFT", options, "TOPLEFT", 22, -120)
     options.whisperMessage:SetAutoFocus(false)
     options.whisperMessage:SetMaxLetters(128)
     options.whisperMessage:SetFontObject("dynt_options_text")
@@ -470,7 +486,7 @@ function AddOn:CreateOptionsFrame()
 	-- Hide minimap button
 	---@type CheckButton
 	options.hideMinimap = CreateFrame("CheckButton", "DYNT_Options_HideMinimap", options, "ChatConfigCheckButtonTemplate")
-	options.hideMinimap:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -110)
+	options.hideMinimap:SetPoint("TOPLEFT", options, "TOPLEFT", 12, -150)
 	DYNT_Options_HideMinimapText:SetText(L["Hide minimap button"])
 	DYNT_Options_HideMinimapText:SetFontObject("dynt_options_text")
 	if AddOn.db.minimap.hide then options.hideMinimap:SetChecked(true) end
@@ -484,7 +500,7 @@ function AddOn:CreateOptionsFrame()
     end)
 
     options.fontDropdown = CreateFrame("Frame", "DYNT_Options_Font", options, "UIDropDownMenuTemplate")
-    options.fontDropdown:SetPoint("TOPLEFT", options, "TOPLEFT", 5, -155)
+    options.fontDropdown:SetPoint("TOPLEFT", options, "TOPLEFT", 5, -195)
     UIDropDownMenu_SetText(options.fontDropdown, getFontDisplayName(AddOn.Config.fontName))
     DYNT_Options_FontText:SetFontObject("dynt_options_text")
     UIDropDownMenu_Initialize(options.fontDropdown, function(_, level)
@@ -530,7 +546,7 @@ function AddOn:CreateOptionsFrame()
     options.minDelta = CreateFrame("Slider", "DYNT_Options_MinDelta", options, "OptionsSliderTemplate")
     options.minDelta:SetWidth(100)
     options.minDelta:SetHeight(20)
-    options.minDelta:SetPoint("TOPLEFT", 22, -220)
+    options.minDelta:SetPoint("TOPLEFT", 22, -260)
     options.minDelta:SetOrientation("HORIZONTAL")
     options.minDelta:SetMinMaxValues(0, 30)
     options.minDelta:SetValue(AddOn.Config.minDelta)
